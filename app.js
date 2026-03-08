@@ -38,7 +38,11 @@ let sentenceIdx      = 0;
 let textNodes        = [];  // [{node, start, end}]
 let pageFullText     = '';
 let iframeDoc        = null;
-let activeMarkEls    = [];  // <mark> elements currently in DOM
+let activeMarkEls    = [];  // <mark> elements currently in DOM// ─── Background audio state (keep alive when screen is off) ─────────────────────
+let audioCtx       = null;
+let silentSource   = null;
+let silentLoop     = null;
+
 
 // ─── Voice loading ────────────────────────────────────────────────────────────
 function populateVoiceList() {
@@ -346,6 +350,7 @@ function startPlaying() {
     isPaused  = false;
     sentenceIdx = 0;
     setPlayIcon('pause');
+    startBackgroundSession();  // keep audio alive when screen off
     startPageReading();
 }
 
@@ -367,6 +372,7 @@ function stopReading() {
     sentenceIdx = 0;
     stopSpeaking();
     setPlayIcon('play');
+    stopBackgroundSession();
 }
 
 function stopSpeaking() {
@@ -379,6 +385,100 @@ function setPlayIcon(icon) {
     if (icon === 'pause') playPauseBtn.classList.add('playing');
     else playPauseBtn.classList.remove('playing');
 }
+
+// ─── Background / screen-off audio session ────────────────────────────────
+// Plays a perfectly silent looping buffer through the Web Audio API.
+// This tells Android/iOS that there is an active audio session so they
+// don't suspend the browser tab when the screen turns off.
+function startBackgroundSession() {
+    try {
+        if (audioCtx) return; // already running
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        // 2-second silent buffer, looping forever
+        const seconds = 2;
+        const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * seconds, audioCtx.sampleRate);
+        // Buffer is all zeros = silence
+        silentSource = audioCtx.createBufferSource();
+        silentSource.buffer = buffer;
+        silentSource.loop = true;
+        silentSource.connect(audioCtx.destination);
+        silentSource.start(0);
+        console.log('Session audio de fond : démarrée');
+    } catch(e) {
+        console.warn('Impossible de démarrer la session audio de fond:', e);
+    }
+
+    setupMediaSession();
+}
+
+function stopBackgroundSession() {
+    try {
+        silentSource?.stop();
+        audioCtx?.close();
+    } catch(e) {}
+    audioCtx = null;
+    silentSource = null;
+
+    if ('mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = 'none';
+    }
+}
+
+// Registers the app as a media player so lock screen controls appear on Android/iOS
+function setupMediaSession() {
+    if (!('mediaSession' in navigator)) return;
+
+    const title = titleElem?.textContent || 'EbookReader';
+    navigator.mediaSession.metadata = new MediaMetadata({
+        title: title,
+        artist: 'EbookReader',
+        album: 'Lecture audio',
+        artwork: [
+            { src: 'data:image/svg+xml,' + encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96"><rect width="96" height="96" rx="18" fill="%230d1117"/><text y="68" x="48" font-size="60" text-anchor="middle" font-family="serif">📖</text></svg>`), sizes: '96x96', type: 'image/svg+xml' }
+        ]
+    });
+    navigator.mediaSession.playbackState = 'playing';
+
+    // Lock screen buttons
+    navigator.mediaSession.setActionHandler('play', () => {
+        if (!isPlaying || isPaused) resumePlaying();
+    });
+    navigator.mediaSession.setActionHandler('pause', () => {
+        if (isPlaying && !isPaused) pausePlaying();
+    });
+    navigator.mediaSession.setActionHandler('nexttrack', () => {
+        stopReading(); if (rendition) rendition.next();
+    });
+    navigator.mediaSession.setActionHandler('previoustrack', () => {
+        stopReading(); if (rendition) rendition.prev();
+    });
+
+    console.log('MediaSession configurée - Contrôles sur écran de verrouillage actifs');
+}
+
+// If the browser pauses speech when the page goes to background,
+// resume it as soon as the page becomes visible again.
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && isPlaying && !isPaused) {
+        // Some browsers pause synth on hide; force-resume
+        if (synth.paused) {
+            synth.resume();
+        } else if (!synth.speaking) {
+            // Fell through the cracks: restart current sentence
+            setTimeout(() => readSentence(sentenceIdx), 200);
+        }
+    }
+    if ('mediaSession' in navigator && isPlaying) {
+        navigator.mediaSession.playbackState = isPaused ? 'paused' : 'playing';
+    }
+});
+
+// Also sync MediaSession state when pause/resume
+const _origPause = pausePlaying;
+const _origResume = resumePlaying;
+// We don't override here since they're declared later with identical names;
+// mediaSession state is updated in setPlayIcon
+
 
 // ─── Page text extraction ────────────────────────────────────────────────────
 async function startPageReading() {
