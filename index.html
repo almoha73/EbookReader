@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ebook Reader - PlayLivres Style</title>
+    <link rel="stylesheet" href="style.css">
+    <!-- Google Fonts for typography -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- ePub.js and its dependency JSZip -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.1.5/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js"></script>
+    <!-- localForage for storing EPUB files in IndexedDB easily -->
+    <script src="https://cdn.jsdelivr.net/npm/localforage@1.10.0/dist/localforage.min.js"></script>
+    <!-- FontAwesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Library View -->
+        <div id="library-view" class="view active">
+            <header class="glass-header">
+                <h1>Mes Livres</h1>
+                <label for="book-upload" class="upload-btn">
+                    <i class="fas fa-plus"></i> Ajouter un EPUB
+                </label>
+                <input type="file" id="book-upload" accept=".epub" style="display: none;">
+            </header>
+            <main class="library-grid" id="book-list">
+                <!-- Book Cards will be injected here -->
+            </main>
+        </div>
+
+        <!-- Reader View -->
+        <div id="reader-view" class="view">
+            <header class="glass-header slide-in">
+                <button id="back-to-library" class="icon-btn" title="Retour à la bibliothèque">
+                    <i class="fas fa-arrow-left"></i>
+                </button>
+                <h2 id="current-book-title">Titre du livre</h2>
+                
+                <div class="reader-controls">
+                    <button id="play-pause-btn" class="icon-btn highlight" title="Lecture audio">
+                        <i class="fas fa-play"></i>
+                    </button>
+                    <button id="settings-btn" class="icon-btn" title="Paramètres audio et affichage">
+                        <i class="fas fa-sliders-h"></i>
+                    </button>
+                </div>
+            </header>
+
+            <div id="viewer" class="viewer-container"></div>
+            
+            <button id="prev-page" class="nav-btn left"><i class="fas fa-chevron-left"></i></button>
+            <button id="next-page" class="nav-btn right"><i class="fas fa-chevron-right"></i></button>
+
+            <!-- Bottom Progress bar -->
+            <div class="reading-progress">
+                <div class="progress-bar-fill" id="progress-fill"></div>
+            </div>
+
+            <!-- Settings Panel (Audio & Display) -->
+            <div id="settings-panel" class="settings-panel glass-panel hidden">
+                <h3>Paramètres</h3>
+                
+                <div class="setting-group">
+                    <label>Voix (Text-To-Speech)</label>
+                    <select id="voice-select"></select>
+                </div>
+
+                <div class="setting-group">
+                    <label>Vitesse de lecture</label>
+                    <input type="range" id="rate-select" min="0.5" max="2" value="1" step="0.1">
+                    <span id="rate-value">1.0x</span>
+                </div>
+
+                <div class="setting-group">
+                    <label>Taille du texte</label>
+                    <div class="font-size-controls">
+                        <button id="decrease-font">A-</button>
+                        <button id="increase-font">A+</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html>
