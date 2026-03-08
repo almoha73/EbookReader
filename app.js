@@ -38,10 +38,12 @@ let sentenceIdx      = 0;
 let textNodes        = [];  // [{node, start, end}]
 let pageFullText     = '';
 let iframeDoc        = null;
-let activeMarkEls    = [];  // <mark> elements currently in DOM// ─── Background audio state (keep alive when screen is off) ─────────────────────
+let activeMarkEls    = [];  // <mark> elements currently in DOM
+
+// ─── Background audio state (keep alive when screen is off) ─────────────────────
 let audioCtx       = null;
 let silentSource   = null;
-let silentLoop     = null;
+let silentWatchdog = null;  // interval that restarts speech if OS kills it
 
 
 // ─── Voice loading ────────────────────────────────────────────────────────────
@@ -387,31 +389,55 @@ function setPlayIcon(icon) {
 }
 
 // ─── Background / screen-off audio session ────────────────────────────────
-// Plays a perfectly silent looping buffer through the Web Audio API.
-// This tells Android/iOS that there is an active audio session so they
-// don't suspend the browser tab when the screen turns off.
+// Strategy:
+//  1. Play a nearly-inaudible noise loop through Web Audio API.
+//     Pure silence (zeros) is detected as "no audio" by Android and the tab
+//     gets suspended. A tiny non-zero signal keeps the audio focus alive.
+//  2. A watchdog timer checks every 2 s if speech synthesis is still running.
+//     If it stopped unexpectedly (killed by OS), it restarts the sentence.
 function startBackgroundSession() {
     try {
-        if (audioCtx) return; // already running
+        if (audioCtx && audioCtx.state !== 'closed') return; // already running
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        // 2-second silent buffer, looping forever
-        const seconds = 2;
-        const buffer = audioCtx.createBuffer(1, audioCtx.sampleRate * seconds, audioCtx.sampleRate);
-        // Buffer is all zeros = silence
+
+        // 1-second buffer filled with nearly-inaudible white noise (amplitude 0.0001)
+        // This is ~80 dB below full scale — completely inaudible to humans
+        // but clearly non-zero, so iOS/Android keep the audio session alive.
+        const sr = audioCtx.sampleRate;
+        const buffer = audioCtx.createBuffer(1, sr, sr);
+        const data = buffer.getChannelData(0);
+        for (let i = 0; i < data.length; i++) {
+            data[i] = (Math.random() * 2 - 1) * 0.0001;
+        }
         silentSource = audioCtx.createBufferSource();
         silentSource.buffer = buffer;
         silentSource.loop = true;
         silentSource.connect(audioCtx.destination);
         silentSource.start(0);
-        console.log('Session audio de fond : démarrée');
+        console.log('► Session audio de fond : active (bruit inaudible en boucle)');
     } catch(e) {
-        console.warn('Impossible de démarrer la session audio de fond:', e);
+        console.warn('Session audio de fond impossible:', e);
     }
+
+    // Watchdog: if synth stops talking while we expect it to be reading, restart.
+    clearInterval(silentWatchdog);
+    silentWatchdog = setInterval(() => {
+        if (isPlaying && !isPaused && !synth.speaking && !synth.pending) {
+            console.warn('⚠ Watchdog: synthèse vocale stoppée de manière inattendue. Relance...');
+            // Restart AudioContext if it was suspended by the OS
+            if (audioCtx && audioCtx.state === 'suspended') {
+                audioCtx.resume().catch(() => {});
+            }
+            readSentence(sentenceIdx);
+        }
+    }, 2000);
 
     setupMediaSession();
 }
 
 function stopBackgroundSession() {
+    clearInterval(silentWatchdog);
+    silentWatchdog = null;
     try {
         silentSource?.stop();
         audioCtx?.close();
