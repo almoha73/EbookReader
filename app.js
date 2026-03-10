@@ -364,7 +364,7 @@ function injectHighlightStyleAndClickListener() {
             fontSizeEl.id = 'reader-font-size';
             doc.head.appendChild(fontSizeEl);
         }
-        fontSizeEl.textContent = `html { font-size: ${fontSize}% !important; }`;
+        fontSizeEl.textContent = `html { zoom: ${fontSize / 100} !important; -webkit-text-size-adjust: none !important; text-size-adjust: none !important; }`;
 
         // Touch swipe in the iframe to turn pages (mobile)
         addIframeSwipeListeners(doc);
@@ -489,38 +489,45 @@ increaseFontBtn.addEventListener('click', () => {
 function applyFontSize() {
     const display = document.getElementById('font-size-display');
     if (display) display.textContent = fontSize + '%';
-    console.log('[font] Application taille:', fontSize + '%');
 
-    // Test visible dans le DOM PARENT (pas l'iframe) pour confirmer que l'événement fonctionne
-    // Si le texte du panneau de paramètres grossit → JS OK, problème dans l'iframe
-    // Si rien ne grossit → le clic n'arrive pas
     const settingsPanelEl = document.getElementById('settings-panel');
     if (settingsPanelEl) settingsPanelEl.style.fontSize = (fontSize / 100) + 'rem';
 
-    if (!rendition) { console.warn('[font] Pas de rendition'); return; }
+    if (!rendition) return;
 
-    // 1. Enregistrement du thème via EPUB.js (persistant entre les pages)
-    rendition.themes.default({
-        'html': { 'font-size': `${fontSize}% !important` }
-    });
+    const scale = fontSize / 100;
 
-    // 2. Injection CSS directe dans l'iframe courante (appliquée immédiatement)
+    // Méthode 1 : zoom CSS sur l'iframe (Chrome/Android/Safari - pas Firefox)
+    // zoom scale absolument tout le contenu, indépendamment du CSS de l'EPUB
     try {
         const contents = rendition.getContents();
-        console.log('[font] Contents:', contents ? contents.length : 'null');
         if (contents && contents.length) {
             const doc = contents[0].document;
-            console.log('[font] Doc accessible:', !!doc, '| head:', !!doc?.head);
             let styleEl = doc.getElementById('reader-font-size');
             if (!styleEl) {
                 styleEl = doc.createElement('style');
                 styleEl.id = 'reader-font-size';
                 doc.head.appendChild(styleEl);
             }
-            styleEl.textContent = `html { font-size: ${fontSize}% !important; }`;
-            console.log('[font] Style injecté:', styleEl.textContent);
+            // zoom: scale tout le layout (Chrome/Safari) 
+            // transform: scale fallback (Firefox)
+            styleEl.textContent = `
+                html {
+                    zoom: ${scale} !important;
+                    -webkit-text-size-adjust: none !important;
+                    text-size-adjust: none !important;
+                }
+                @-moz-document url-prefix() {
+                    html { transform: scale(${scale}); transform-origin: top left; }
+                }
+            `;
         }
-    } catch(e) { console.error('[font] Erreur injection:', e); }
+    } catch(e) { console.error('[font] Erreur:', e); }
+
+    // Méthode 2 : aussi via le thème EPUB.js pour persistance entre pages
+    rendition.themes.default({
+        'html': { 'zoom': `${scale}`, '-webkit-text-size-adjust': 'none' }
+    });
 }
 
 rateSelect.oninput = (e) => {
