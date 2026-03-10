@@ -283,7 +283,7 @@ function handleTapToRead(doc, clientX, clientY) {
             const offset = range.startOffset;
             for (const tn of textNodes) {
                 if (tn.node === node) {
-                    clickedCharIndex = tn.start + offset;
+                    clickedCharIndex = tn.start + (offset - Math.max(0, tn.nodeStart || 0));
                     break;
                 }
             }
@@ -373,7 +373,7 @@ function injectHighlightStyleAndClickListener() {
                     if (textNodes.length) {
                         for (const tn of textNodes) {
                             if (tn.node === clickedNode) {
-                                clickedCharIndex = tn.start + clickedOffset;
+                                clickedCharIndex = tn.start + (clickedOffset - Math.max(0, tn.nodeStart || 0));
                                 break;
                             }
                         }
@@ -657,7 +657,6 @@ function buildVisibleTextNodes(doc) {
     const result = { textNodes: [], pageFullText: '' };
     const win    = doc.defaultView;
     const vw     = win.innerWidth;
-    const vh     = win.innerHeight;
 
     const walk = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, null, false);
     let node;
@@ -670,26 +669,69 @@ function buildVisibleTextNodes(doc) {
         // Use Range to get exact bounding boxes for this text node
         range.selectNodeContents(node);
         const rects = range.getClientRects();
-        let isVisible = false;
+        let isOnPrevPage = false;
+        let isOnCurrentPage = false;
+        let isOnNextPage = false;
 
         for (let i = 0; i < rects.length; i++) {
             const r = rects[i];
-            // Check if any visual line box of this text node is inside the viewport
-            // (we allow a small margin for letters slightly overhanging bounds)
-            if (r.width > 0 && r.height > 0 && r.left < vw - 5 && r.right > 5 && r.top < vh && r.bottom > 0) {
-                isVisible = true;
-                break;
+            if (r.width > 0 && r.height > 0) {
+                if (r.right <= 5) isOnPrevPage = true;
+                else if (r.left >= vw - 5) isOnNextPage = true;
+                else isOnCurrentPage = true;
             }
         }
 
-        if (!isVisible) continue;
+        if (!isOnCurrentPage) continue;
+
+        let startChar = 0;
+        let endChar = text.length;
+
+        if (isOnPrevPage) {
+            let low = 0, high = text.length - 1;
+            startChar = text.length;
+            while(low <= high) {
+                let mid = Math.floor((low + high) / 2);
+                range.setStart(node, mid);
+                range.setEnd(node, Math.min(mid + 1, text.length));
+                let r = range.getBoundingClientRect();
+                if (r.width === 0 && mid < text.length - 1) {
+                    range.setEnd(node, text.length);
+                    r = range.getBoundingClientRect();
+                }
+                if (r.right <= 5) low = mid + 1;
+                else { startChar = mid; high = mid - 1; }
+            }
+        }
+
+        if (isOnNextPage) {
+            let low = startChar, high = text.length - 1;
+            endChar = text.length;
+            while(low <= high) {
+                let mid = Math.floor((low + high) / 2);
+                range.setStart(node, mid);
+                range.setEnd(node, Math.min(mid + 1, text.length));
+                let r = range.getBoundingClientRect();
+                if (r.width === 0 && mid < text.length - 1) {
+                    range.setEnd(node, text.length);
+                    r = range.getBoundingClientRect();
+                }
+                if (r.left >= vw - 5) { endChar = mid; high = mid - 1; }
+                else low = mid + 1;
+            }
+        }
+
+        const visibleTextForNode = text.substring(startChar, endChar);
+        if (!visibleTextForNode.trim()) continue;
 
         result.textNodes.push({ 
             node,
             start: result.pageFullText.length,
-            end:   result.pageFullText.length + text.length 
+            end:   result.pageFullText.length + visibleTextForNode.length,
+            nodeStart: startChar,
+            nodeEnd: endChar
         });
-        result.pageFullText += text;
+        result.pageFullText += visibleTextForNode;
     }
     
     console.log(`[visible] ${result.textNodes.length} nœuds extirpés.`);
@@ -828,14 +870,6 @@ function readSentence(idx) {
     utt.rate = parseFloat(rateSelect.value);
     utt.lang = voices[vIdx]?.lang || 'fr-FR';
 
-    utt.onboundary = (e) => {
-        if (e.name === 'word') {
-            // Check if the currently spoken word is on the next page
-            // e.charIndex is relative to the start of the sentence (s.text)
-            checkWordVisibilityAndTurnPage(s.charStart + e.charIndex);
-        }
-    };
-
     utt.onend = () => {
         if (isPlaying && !isPaused) readSentence(idx + 1);
     };
@@ -846,46 +880,6 @@ function readSentence(idx) {
     };
 
     synth.speak(utt);
-}
-
-// ─── Word visibility check for precise page turning ─────────────────────────
-let pageTurnInProgress = false;
-
-function checkWordVisibilityAndTurnPage(globalCharIndex) {
-    if (!iframeDoc || !textNodes.length || pageTurnInProgress) return;
-
-    let targetNode = null;
-    let targetOffset = 0;
-
-    for (const tn of textNodes) {
-        if (tn.end > globalCharIndex) {
-            targetNode = tn.node;
-            targetOffset = Math.max(0, globalCharIndex - tn.start);
-            break;
-        }
-    }
-
-    if (!targetNode) return;
-
-    try {
-        const range = iframeDoc.createRange();
-        range.setStart(targetNode, targetOffset);
-        range.setEnd(targetNode, Math.min(targetNode.textContent.length, targetOffset + 1));
-        
-        const rect = range.getBoundingClientRect();
-        const vw = iframeDoc.defaultView.innerWidth;
-
-        // Check if the current word has crossed the right edge of the screen
-        if (rect.left >= vw - 10) {
-            if (rendition) {
-                console.log('Mot actuellement lu est sur la page suivante. Tourne la page en direct...');
-                pageTurnInProgress = true;
-                rendition.next().then(() => {
-                    setTimeout(() => { pageTurnInProgress = false; }, 400); // cooldown
-                });
-            }
-        }
-    } catch(e) {}
 }
 
 // ─── Highlighting via Selection API (non-destructive, no DOM mutation) ────────
@@ -912,10 +906,10 @@ function highlightRange(charStart, length) {
 
         if (!startNode) {
             startNode   = tn.node;
-            startOffset = Math.max(0, charStart - tn.start);
+            startOffset = (tn.nodeStart || 0) + Math.max(0, charStart - tn.start);
         }
         endNode   = tn.node;
-        endOffset = Math.min(tn.node.textContent.length, charEnd - tn.start);
+        endOffset = (tn.nodeStart || 0) + Math.min((tn.nodeEnd || tn.node.textContent.length) - (tn.nodeStart || 0), charEnd - tn.start);
     }
 
     if (!startNode || !endNode) return;
@@ -935,18 +929,9 @@ function highlightRange(charStart, length) {
         sel.addRange(range);
         ifWin.scrollTo(sx, sy);
 
-        // Fallback safety check: if the entire sentence we just started highlighting
-        // is ALREADY completely on the next page, turn the page immediately.
-        const vw = ifWin.innerWidth;
-        const rect = range.getBoundingClientRect();
-        if (rect.left >= vw - 10) {
-            console.log('Phrase entière sur la page suivante. Tourne la page...');
-            if (rendition) rendition.next();
-        }
-
-        // No rect-based page detection needed for turning *at the end*: 
-        // sentences[] now only contains the current visible page, so page turns 
-        // happen naturally when idx >= sentences.length.
+        // No rect-based page detection needed: sentences[] now only contains
+        // the completely visible text on the current page. Reading reaches 
+        // the exact end of the visual page, then auto-turns naturally.
     } catch(e) {
         console.error('Highlight error:', e);
     }
