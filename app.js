@@ -692,11 +692,14 @@ function buildVisibleTextNodes(doc) {
 function isSentenceOnNextPage(doc, charStart, charEnd) {
     if (!doc || !textNodes.length) return false;
 
+    // Use a slightly shifted start just in case charStart falls exactly on an invisible space
+    let checkPos = charStart;
     let startNode = null, startOffset = 0;
+    
     for (const tn of textNodes) {
-        if (tn.end > charStart) {
+        if (tn.end > checkPos) {
             startNode = tn.node;
-            startOffset = Math.max(0, charStart - tn.start);
+            startOffset = Math.max(0, checkPos - tn.start);
             break;
         }
     }
@@ -705,14 +708,14 @@ function isSentenceOnNextPage(doc, charStart, charEnd) {
     try {
         const range = doc.createRange();
         range.setStart(startNode, startOffset);
-        // Just checking the *beginning* of the sentence is usually enough
-        range.setEnd(startNode, Math.min(startOffset + 1, startNode.textContent.length));
+        // Expand the check slightly into the word to get a solid layout box
+        range.setEnd(startNode, Math.min(startOffset + 3, startNode.textContent.length));
         
         const rect = range.getBoundingClientRect();
         const vw = doc.defaultView.innerWidth;
 
-        // If the start of the sentence is beyond the current visible screen width
-        return (rect.left >= vw - 5);
+        // The sentence physically starts on or past the right edge (column 2)
+        return (rect.left >= vw - 10 && rect.width > 0);
     } catch(e) {
         return false;
     }
@@ -782,15 +785,21 @@ async function startPageReading() {
     sentences = splitSentences(pageFullText);
     if (!sentences.length) { if (isPlaying && !isPaused) rendition.next(); return; }
 
-    // If we're resuming on the same page where we paused, restore sentence position
     const savedCfi         = localStorage.getItem(`cfi_${currentBookId}`);
     const savedSentenceIdx = parseInt(localStorage.getItem(`sentenceIdx_${currentBookId}`) || '0', 10);
     const currentPageCfi   = rendition.currentLocation()?.start?.cfi;
     let startIdx = 0;
+    
+    // If we're resuming on the same CFI, resume from the exact sentence index
     if (savedSentenceIdx > 0 && savedCfi && savedCfi === currentPageCfi && savedSentenceIdx < sentences.length) {
         startIdx = savedSentenceIdx;
         console.log('Reprise à la phrase n°', startIdx);
+    } else if (savedSentenceIdx > 0) {
+        // If the CFI changed (page turn) but we wanted to auto-read, start at sentence 0 of the new page
+        localStorage.setItem(`sentenceIdx_${currentBookId}`, 0);
+        startIdx = 0;
     }
+    
     readSentence(startIdx);
 }
 
@@ -834,11 +843,11 @@ function readSentence(idx) {
     if (isSentenceOnNextPage(iframeDoc, s.charStart, s.charStart + s.text.length)) {
         console.log('Phrase sur la page suivante détectée entre deux lectures ! Tourner la page.');
         if (isPlaying && !isPaused) {
-            // Keep playback state active but delay reading until page fully rendered
             pendingAutoRead = true;
+            localStorage.setItem(`sentenceIdx_${currentBookId}`, 0); // start fresh on new page
             rendition?.next();
         }
-        return; // Do not highlight or speak it on the current blind page!
+        return; // Do not highlight or speak it !
     }
 
     // Otherwise, the sentence is at least partially visible here. Highlighting and reading it!
