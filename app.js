@@ -653,34 +653,46 @@ const _origResume = resumePlaying;
 // ─── Page text extraction ────────────────────────────────────────────────────
 
 // Build textNodes from the CURRENTLY VISIBLE epub column only.
-// epub.js paginated = CSS columns; each "page" is one column.
-// KEY: use defaultView.innerWidth (= 1 page viewport) NOT clientWidth (= all columns total).
 function buildVisibleTextNodes(doc) {
     const result = { textNodes: [], pageFullText: '' };
     const win    = doc.defaultView;
-    const vw     = win.innerWidth;   // true visible width (one column)
-    const vh     = win.innerHeight;  // true visible height
+    const vw     = win.innerWidth;
+    const vh     = win.innerHeight;
 
     const walk = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, null, false);
     let node;
+    const range = doc.createRange();
+
     while ((node = walk.nextNode())) {
         const text = node.textContent;
         if (!text.trim()) continue;
-        const parent = node.parentElement;
-        if (parent) {
-            const r = parent.getBoundingClientRect();
-            if (r.width === 0 || r.height === 0) continue; // hidden / collapsed
-            // Skip if off-screen horizontally (another column)
-            if (r.right <= 2 || r.left >= vw - 2) continue;
-            // Skip if off-screen vertically
-            if (r.bottom <= 0 || r.top >= vh) continue;
+
+        // Use Range to get exact bounding boxes for this text node
+        range.selectNodeContents(node);
+        const rects = range.getClientRects();
+        let isVisible = false;
+
+        for (let i = 0; i < rects.length; i++) {
+            const r = rects[i];
+            // Check if any visual line box of this text node is inside the viewport
+            // (we allow a small margin for letters slightly overhanging bounds)
+            if (r.width > 0 && r.height > 0 && r.left < vw - 5 && r.right > 5 && r.top < vh && r.bottom > 0) {
+                isVisible = true;
+                break;
+            }
         }
-        result.textNodes.push({ node,
+
+        if (!isVisible) continue;
+
+        result.textNodes.push({ 
+            node,
             start: result.pageFullText.length,
-            end:   result.pageFullText.length + text.length });
+            end:   result.pageFullText.length + text.length 
+        });
         result.pageFullText += text;
     }
-    console.log(`[visible] ${result.textNodes.length} nœuds, ${result.pageFullText.length} chars}`);
+    
+    console.log(`[visible] ${result.textNodes.length} nœuds extirpés.`);
     return result;
 }
 
@@ -837,8 +849,10 @@ function readSentence(idx) {
 }
 
 // ─── Word visibility check for precise page turning ─────────────────────────
+let pageTurnInProgress = false;
+
 function checkWordVisibilityAndTurnPage(globalCharIndex) {
-    if (!iframeDoc || !textNodes.length) return;
+    if (!iframeDoc || !textNodes.length || pageTurnInProgress) return;
 
     let targetNode = null;
     let targetOffset = 0;
@@ -855,19 +869,20 @@ function checkWordVisibilityAndTurnPage(globalCharIndex) {
 
     try {
         const range = iframeDoc.createRange();
-        // Just select a tiny range around the current word
         range.setStart(targetNode, targetOffset);
         range.setEnd(targetNode, Math.min(targetNode.textContent.length, targetOffset + 1));
         
         const rect = range.getBoundingClientRect();
         const vw = iframeDoc.defaultView.innerWidth;
-        
-        // If the word we are currently speaking is on the next screen (e.g. left >= vw)
+
+        // Check if the current word has crossed the right edge of the screen
         if (rect.left >= vw - 10) {
             if (rendition) {
-                console.log('Mot actuellement lu est sur la page suivante. Tourne la page...');
-                rendition.next();
-                // rendition.next() is asynchronous, but EPUB.js shifts columns immediately
+                console.log('Mot actuellement lu est sur la page suivante. Tourne la page en direct...');
+                pageTurnInProgress = true;
+                rendition.next().then(() => {
+                    setTimeout(() => { pageTurnInProgress = false; }, 400); // cooldown
+                });
             }
         }
     } catch(e) {}
