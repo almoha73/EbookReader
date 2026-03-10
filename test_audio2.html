@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html>
+<body>
+<h1>Test Media Session Long</h1>
+<button id="btn" style="font-size:3em; padding:2em;">PLAY</button>
+<div id="log" style="font-size:2em;"></div>
+<audio id="main" loop src=""></audio>
+<script>
+const log = document.getElementById('log');
+let idx = 0;
+const texts = ["phrase1", "phrase2", "phrase3"];
+const main = document.getElementById('main');
+let sourceStream = null;
+
+document.getElementById('btn').onclick = () => {
+  log.innerHTML += "<br>Play clicked";
+  // We cannot easily merge audio. But Android media session does not survive src changes.
+  // Real podcasts play 1 long source.
+}
+</script>
+</body>
+</html>

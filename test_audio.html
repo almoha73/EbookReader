@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<body>
+<h1>Test Audio Continue</h1>
+<button id="btn" style="font-size:3em; padding:2em;">PLAY</button>
+<div id="log" style="font-size:2em;"></div>
+<audio id="tts" src="https://translate.google.com/translate_tts?ie=UTF-8&q=test1&tl=fr&client=tw-ob"></audio>
+<audio id="tts2" src="https://translate.google.com/translate_tts?ie=UTF-8&q=test2&tl=fr&client=tw-ob"></audio>
+<script>
+const log = document.getElementById('log');
+let idx = 0;
+const texts = ["test1", "test2", "phrase3", "phrase4", "la suite est ici", "encore un test", "toujours un test", "et on continue"];
+const a1 = document.getElementById('tts');
+const a2 = document.getElementById('tts2');
+let current = a1;
+
+document.getElementById('btn').onclick = () => {
+  log.innerHTML += "<br>Play clicked";
+  playNext();
+}
+
+function playNext() {
+  if(idx >= texts.length) return;
+  const t = texts[idx];
+  log.innerHTML += `<br>Playing ${idx}: ${t}`;
+  
+  const url = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(t)}&tl=fr&client=tw-ob`;
+  current.src = url;
+  current.play().catch(e => log.innerHTML += '<br>Error ' + e);
+  
+  current.onended = () => {
+     idx++;
+     // alternate
+     current = (current === a1) ? a2 : a1;
+     playNext();
+  }
+}
+</script>
+</body>
+</html>
