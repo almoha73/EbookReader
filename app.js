@@ -339,7 +339,11 @@ function injectHighlightStyleAndClickListener() {
                 background-color: #FFE033 !important;
                 color: #000 !important;
             }
-            body { cursor: text; }
+            body { 
+                cursor: text; 
+                padding: 0 16px !important; 
+                box-sizing: border-box !important;
+            }
         `;
         doc.head.appendChild(style);
 
