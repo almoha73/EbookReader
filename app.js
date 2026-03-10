@@ -31,7 +31,7 @@ let voices  = [];
 let voicesReady = false;
 
 let isPlaying  = false;
-let pendingAutoRead = false;  // set when TTS finishes a page → triggers read on next render
+let pendingAutoRead = false; // keep for compat, but we'll use Promises
 let isPaused   = false;
 
 let sentences        = [];  // [{text, charStart}]
@@ -194,11 +194,6 @@ async function openBook(meta) {
 
     rendition.on('rendered', () => {
         injectHighlightStyleAndClickListener();
-        // Auto-read the new page if TTS reached the end of the previous one
-        if (pendingAutoRead && isPlaying && !isPaused) {
-            pendingAutoRead = false;
-            setTimeout(() => startPageReading(), 350);
-        }
     });
 
     rendition.on('click', () => settingsPanel.classList.add('hidden'));
@@ -700,6 +695,16 @@ function findSentenceIdx(charIndex) {
     return targetIdx;
 }
 
+async function autoTurnPageAndRead() {
+    if (!isPlaying || isPaused || !rendition) return;
+    try {
+        await rendition.next();
+        if (isPlaying && !isPaused) {
+            setTimeout(() => startPageReading(), 300);
+        }
+    } catch(e) { console.error('autoTurnPageAndRead err:', e); }
+}
+
 async function startPageReadingThenSeek(seekCharIndex) {
     if (!isPlaying || isPaused || !rendition) return;
     stopSpeaking();
@@ -720,9 +725,9 @@ async function startPageReadingThenSeek(seekCharIndex) {
     textNodes    = built.textNodes;
     pageFullText = built.pageFullText;
 
-    if (!pageFullText.trim()) { if (isPlaying && !isPaused) rendition.next(); return; }
+    if (!pageFullText.trim()) { if (isPlaying && !isPaused) autoTurnPageAndRead(); return; }
     sentences = splitSentences(pageFullText);
-    if (!sentences.length) { if (isPlaying && !isPaused) rendition.next(); return; }
+    if (!sentences.length) { if (isPlaying && !isPaused) autoTurnPageAndRead(); return; }
 
     const startIdx = seekCharIndex >= 0 ? findSentenceIdx(seekCharIndex) : 0;
     readSentence(startIdx);
@@ -749,9 +754,9 @@ async function startPageReading() {
     textNodes    = built.textNodes;
     pageFullText = built.pageFullText;
 
-    if (!pageFullText.trim()) { if (isPlaying && !isPaused) rendition.next(); return; }
+    if (!pageFullText.trim()) { if (isPlaying && !isPaused) autoTurnPageAndRead(); return; }
     sentences = splitSentences(pageFullText);
-    if (!sentences.length) { if (isPlaying && !isPaused) rendition.next(); return; }
+    if (!sentences.length) { if (isPlaying && !isPaused) autoTurnPageAndRead(); return; }
 
     // If we're resuming on the same page where we paused, restore sentence position
     const savedCfi         = localStorage.getItem(`cfi_${currentBookId}`);
@@ -786,8 +791,7 @@ function readSentence(idx) {
         // Clear sentence position when page ends naturally
         localStorage.removeItem(`sentenceIdx_${currentBookId}`);
         if (isPlaying && !isPaused) {
-            pendingAutoRead = true;   // will be consumed by the 'rendered' event
-            rendition?.next();
+            autoTurnPageAndRead();
         }
         return;
     }
@@ -812,6 +816,14 @@ function readSentence(idx) {
     utt.rate = parseFloat(rateSelect.value);
     utt.lang = voices[vIdx]?.lang || 'fr-FR';
 
+    utt.onboundary = (e) => {
+        if (e.name === 'word') {
+            // Check if the currently spoken word is on the next page
+            // e.charIndex is relative to the start of the sentence (s.text)
+            checkWordVisibilityAndTurnPage(s.charStart + e.charIndex);
+        }
+    };
+
     utt.onend = () => {
         if (isPlaying && !isPaused) readSentence(idx + 1);
     };
@@ -822,6 +834,43 @@ function readSentence(idx) {
     };
 
     synth.speak(utt);
+}
+
+// ─── Word visibility check for precise page turning ─────────────────────────
+function checkWordVisibilityAndTurnPage(globalCharIndex) {
+    if (!iframeDoc || !textNodes.length) return;
+
+    let targetNode = null;
+    let targetOffset = 0;
+
+    for (const tn of textNodes) {
+        if (tn.end > globalCharIndex) {
+            targetNode = tn.node;
+            targetOffset = Math.max(0, globalCharIndex - tn.start);
+            break;
+        }
+    }
+
+    if (!targetNode) return;
+
+    try {
+        const range = iframeDoc.createRange();
+        // Just select a tiny range around the current word
+        range.setStart(targetNode, targetOffset);
+        range.setEnd(targetNode, Math.min(targetNode.textContent.length, targetOffset + 1));
+        
+        const rect = range.getBoundingClientRect();
+        const vw = iframeDoc.defaultView.innerWidth;
+        
+        // If the word we are currently speaking is on the next screen (e.g. left >= vw)
+        if (rect.left >= vw - 10) {
+            if (rendition) {
+                console.log('Mot actuellement lu est sur la page suivante. Tourne la page...');
+                rendition.next();
+                // rendition.next() is asynchronous, but EPUB.js shifts columns immediately
+            }
+        }
+    } catch(e) {}
 }
 
 // ─── Highlighting via Selection API (non-destructive, no DOM mutation) ────────
@@ -871,8 +920,18 @@ function highlightRange(charStart, length) {
         sel.addRange(range);
         ifWin.scrollTo(sx, sy);
 
-        // No rect-based page detection needed: sentences[] now only contains
-        // the current visible page, so page turns happen naturally when idx >= sentences.length.
+        // Fallback safety check: if the entire sentence we just started highlighting
+        // is ALREADY completely on the next page, turn the page immediately.
+        const vw = ifWin.innerWidth;
+        const rect = range.getBoundingClientRect();
+        if (rect.left >= vw - 10) {
+            console.log('Phrase entière sur la page suivante. Tourne la page...');
+            if (rendition) rendition.next();
+        }
+
+        // No rect-based page detection needed for turning *at the end*: 
+        // sentences[] now only contains the current visible page, so page turns 
+        // happen naturally when idx >= sentences.length.
     } catch(e) {
         console.error('Highlight error:', e);
     }
