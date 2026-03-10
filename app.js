@@ -31,6 +31,7 @@ let voices  = [];
 let voicesReady = false;
 
 let isPlaying  = false;
+let pendingAutoRead = false;  // set when TTS finishes a page → triggers read on next render
 let isPaused   = false;
 
 let sentences        = [];  // [{text, charStart}]
@@ -189,13 +190,15 @@ async function openBook(meta) {
         currentCfi = loc.start.cfi;
         updateProgress();
         saveProgress(loc.start.cfi);
-        if (isPlaying && !isPaused) {
-            setTimeout(() => startPageReading(), 300);
-        }
     });
 
     rendition.on('rendered', () => {
         injectHighlightStyleAndClickListener();
+        // Auto-read the new page if TTS reached the end of the previous one
+        if (pendingAutoRead && isPlaying && !isPaused) {
+            pendingAutoRead = false;
+            setTimeout(() => startPageReading(), 350);
+        }
     });
 
     rendition.on('click', () => settingsPanel.classList.add('hidden'));
@@ -516,6 +519,7 @@ function resumePlaying() {
 function stopReading() {
     isPlaying  = false;
     isPaused   = false;
+    pendingAutoRead = false;
     sentenceIdx = 0;
     stopSpeaking();
     setPlayIcon('play');
@@ -781,7 +785,10 @@ function readSentence(idx) {
         clearHighlight();
         // Clear sentence position when page ends naturally
         localStorage.removeItem(`sentenceIdx_${currentBookId}`);
-        if (isPlaying && !isPaused) rendition?.next();
+        if (isPlaying && !isPaused) {
+            pendingAutoRead = true;   // will be consumed by the 'rendered' event
+            rendition?.next();
+        }
         return;
     }
 
