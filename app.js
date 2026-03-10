@@ -726,9 +726,9 @@ function setPlayIcon(icon) {
 function startBackgroundSession() {
     // 1. HTML5 Audio tag approach (Strongest MediaSession binder for Android/iOS)
     if (!silentAudioEl) {
-        // Fichier MP3 silencieux servi statiquement pour garder la session media active sur Android
-        silentAudioEl = new Audio('silent.mp3');
-        silentAudioEl.loop = true;
+        // Obtenir le lecteur en dur depuis le DOM pour éviter le garbage collection
+        silentAudioEl = document.getElementById('silent-audio');
+        if (!silentAudioEl.src) silentAudioEl.src = 'silent.mp3';
         silentAudioEl.volume = 0.001;  // Quasi-inaudible mais réel
     }
     silentAudioEl.play().catch(e => console.warn('Erreur lecture silentAudioEl:', e));
@@ -1099,7 +1099,7 @@ function readSentence(idx) {
     const textChunk = s.text.trim().substring(0, 200);
     const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(textChunk)}&tl=${langCode}&client=tw-ob`;
 
-    if (!ttsAudioEl) ttsAudioEl = new Audio();
+    if (!ttsAudioEl) ttsAudioEl = document.getElementById('tts-audio');
     if (silentAudioEl && !silentAudioEl.paused) silentAudioEl.pause();
 
     ttsAudioEl.onended = null;
