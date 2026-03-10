@@ -361,7 +361,7 @@ function injectHighlightStyleAndClickListener() {
             fontSizeEl.id = 'reader-font-size';
             doc.head.appendChild(fontSizeEl);
         }
-        fontSizeEl.textContent = `body, p, span, div { font-size: ${fontSize}% !important; }`;
+        fontSizeEl.textContent = `html { font-size: ${fontSize}% !important; }`;
 
         // Touch swipe in the iframe to turn pages (mobile)
         addIframeSwipeListeners(doc);
@@ -497,7 +497,7 @@ function applyFontSize() {
                 styleEl.id = 'reader-font-size';
                 doc.head.appendChild(styleEl);
             }
-            styleEl.textContent = `body, p, span, div { font-size: ${fontSize}% !important; }`;
+            styleEl.textContent = `html { font-size: ${fontSize}% !important; }`;
         }
     } catch(e) {}
 }
