@@ -51,6 +51,7 @@ let activeMarkEls    = [];  // <mark> elements currently in DOM
 // ─── Background audio state (keep alive when screen is off) ─────────────────────
 let audioCtx       = null;
 let silentSource   = null;
+let silentAudioEl  = null;  // HTML5 audio element
 let silentWatchdog = null;  // interval that restarts speech if OS kills it
 let lastSpeakTime  = 0;     // debounce: avoids watchdog firing between sentences
 
@@ -619,21 +620,11 @@ voiceSelect.onchange = () => {
     if (isPlaying && !isPaused) rebuildAndResume();
 };
 
-// Reconstruit les textNodes (invalides après clearHighlight/normalize)
-// puis reprend la lecture à la phrase courante
+// Reconstruit l'état de lecture complet si on change de voix ou de vitesse
 async function rebuildAndResume() {
     synth.cancel();
     clearHighlight();
-    // Reconstruire la liste des textNodes depuis le DOM actuel
-    textNodes    = [];
-    pageFullText = '';
-    if (!iframeDoc) return;
-    try {
-        const built  = buildVisibleTextNodes(iframeDoc);
-        textNodes    = built.textNodes;
-        pageFullText = built.pageFullText;
-        sentences    = splitSentences(pageFullText);
-    } catch(e) { console.error('rebuildAndResume error:', e); return; }
+    await initChapterReadingState();
     readSentence(sentenceIdx);
 }
 
@@ -695,27 +686,35 @@ function setPlayIcon(icon) {
 //  2. A watchdog timer checks every 2 s if speech synthesis is still running.
 //     If it stopped unexpectedly (killed by OS), it restarts the sentence.
 function startBackgroundSession() {
-    try {
-        if (audioCtx && audioCtx.state !== 'closed') return; // already running
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    // 1. HTML5 Audio tag approach (Strongest MediaSession binder for Android/iOS)
+    if (!silentAudioEl) {
+        // A strictly silent short MP3 encoded in base64
+        silentAudioEl = new Audio('data:audio/mp3;base64,//qxkAAAAAAAAAAAAAABz/AAAAAAAAAAAAAAAD/////wAA//8AAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAADAAAAAA=');
+        silentAudioEl.loop = true;
+        silentAudioEl.volume = 0.01;
+    }
+    silentAudioEl.play().catch(e => console.warn('Erreur lecture silentAudioEl:', e));
 
-        // 1-second buffer filled with nearly-inaudible white noise (amplitude 0.0001)
-        // This is ~80 dB below full scale — completely inaudible to humans
-        // but clearly non-zero, so iOS/Android keep the audio session alive.
-        const sr = audioCtx.sampleRate;
-        const buffer = audioCtx.createBuffer(1, sr, sr);
-        const data = buffer.getChannelData(0);
-        for (let i = 0; i < data.length; i++) {
-            data[i] = (Math.random() * 2 - 1) * 0.0001;
+    // 2. Web Audio API approach (Fallback + keeping audio focus strongly)
+    try {
+        if (!audioCtx || audioCtx.state === 'closed') {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const sr = audioCtx.sampleRate;
+            const buffer = audioCtx.createBuffer(1, sr, sr);
+            const data = buffer.getChannelData(0);
+            for (let i = 0; i < data.length; i++) {
+                data[i] = (Math.random() * 2 - 1) * 0.0001;
+            }
+            silentSource = audioCtx.createBufferSource();
+            silentSource.buffer = buffer;
+            silentSource.loop = true;
+            silentSource.connect(audioCtx.destination);
+            silentSource.start(0);
+        } else if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
         }
-        silentSource = audioCtx.createBufferSource();
-        silentSource.buffer = buffer;
-        silentSource.loop = true;
-        silentSource.connect(audioCtx.destination);
-        silentSource.start(0);
-        console.log('► Session audio de fond : active (bruit inaudible en boucle)');
     } catch(e) {
-        console.warn('Session audio de fond impossible:', e);
+        console.warn('Session audio de fond WebAudio impossible:', e);
     }
 
     // Watchdog: if synth stops talking while we expect it to be reading, restart.
@@ -726,6 +725,8 @@ function startBackgroundSession() {
             && Date.now() - lastSpeakTime > 3000) {
             console.warn('⚠ Watchdog: synthèse vocale stoppée de manière inattendue. Relance...');
             if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+            // Check if HTML5 audio was suspended
+            if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(()=>{});
             readSentence(sentenceIdx);
         }
     }, 2000);
@@ -737,6 +738,7 @@ function stopBackgroundSession() {
     clearInterval(silentWatchdog);
     silentWatchdog = null;
     try {
+        if (silentAudioEl) silentAudioEl.pause();
         silentSource?.stop();
         audioCtx?.close();
     } catch(e) {}
