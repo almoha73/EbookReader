@@ -549,15 +549,22 @@ function applyAppearance() {
     
     // Le parent .viewer-container doit aussi switcher
     if (viewer) {
-        if (currentTheme === 'dark') viewer.classList.add('dark-mode');
-        else viewer.classList.remove('dark-mode');
+        if (currentTheme === 'dark') {
+            viewer.classList.add('dark-mode');
+            viewer.style.background = '#0d1117';
+        } else {
+            viewer.classList.remove('dark-mode');
+            viewer.style.background = '#ffffff';
+        }
     }
 
     const css = `
-        html { 
+        html, body { 
             font-size: ${basePx}px !important;
             background: ${bgColor} !important;
             color: ${textColor} !important;
+            margin: 0 !important;
+            padding: 0 !important;
         } 
         body * { 
             font-size: inherit !important;
@@ -585,6 +592,10 @@ function applyAppearance() {
     rendition.themes.default({
         'html': { 
             'font-size': basePx + 'px',
+            'background': `${bgColor} !important`,
+            'color': `${textColor} !important`
+        },
+        'body': { 
             'background': `${bgColor} !important`,
             'color': `${textColor} !important`
         },
