@@ -654,26 +654,34 @@ const _origResume = resumePlaying;
 // ─── Page text extraction ────────────────────────────────────────────────────
 
 // Build textNodes from the CURRENTLY VISIBLE epub column only.
-// epub.js paginated mode loads the whole chapter in one iframe but displays
-// it as CSS columns. getBoundingClientRect() tells us which nodes are on-screen.
+// epub.js paginated = CSS columns; each "page" is one column.
+// KEY: use defaultView.innerWidth (= 1 page viewport) NOT clientWidth (= all columns total).
 function buildVisibleTextNodes(doc) {
-    const result      = { textNodes: [], pageFullText: '' };
-    const viewWidth   = doc.documentElement.clientWidth;
+    const result = { textNodes: [], pageFullText: '' };
+    const win    = doc.defaultView;
+    const vw     = win.innerWidth;   // true visible width (one column)
+    const vh     = win.innerHeight;  // true visible height
+
     const walk = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, null, false);
     let node;
     while ((node = walk.nextNode())) {
         const text = node.textContent;
         if (!text.trim()) continue;
-        // Only include if the parent element falls on the visible column
         const parent = node.parentElement;
         if (parent) {
             const r = parent.getBoundingClientRect();
-            // Skip nodes off-screen to the right (next column) or left (prev column)
-            if (r.right <= 2 || r.left >= viewWidth - 2) continue;
+            if (r.width === 0 || r.height === 0) continue; // hidden / collapsed
+            // Skip if off-screen horizontally (another column)
+            if (r.right <= 2 || r.left >= vw - 2) continue;
+            // Skip if off-screen vertically
+            if (r.bottom <= 0 || r.top >= vh) continue;
         }
-        result.textNodes.push({ node, start: result.pageFullText.length, end: result.pageFullText.length + text.length });
+        result.textNodes.push({ node,
+            start: result.pageFullText.length,
+            end:   result.pageFullText.length + text.length });
         result.pageFullText += text;
     }
+    console.log(`[visible] ${result.textNodes.length} nœuds, ${result.pageFullText.length} chars}`);
     return result;
 }
 
