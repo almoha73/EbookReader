@@ -23,7 +23,7 @@ let currentBook   = null;
 let rendition     = null;
 let currentCfi    = null;
 let currentBookId = null;
-let fontSize      = 100;
+let fontSize = parseInt(localStorage.getItem('reader_fontSize') || '100', 10);
 
 // TTS state
 const synth = window.speechSynthesis;
@@ -354,6 +354,15 @@ function injectHighlightStyleAndClickListener() {
         `;
         doc.head.appendChild(style);
 
+        // Also apply font size directly (needed on mobile where themes.fontSize may be ignored)
+        let fontSizeEl = doc.getElementById('reader-font-size');
+        if (!fontSizeEl) {
+            fontSizeEl = doc.createElement('style');
+            fontSizeEl.id = 'reader-font-size';
+            doc.head.appendChild(fontSizeEl);
+        }
+        fontSizeEl.textContent = `body, p, span, div { font-size: ${fontSize}% !important; }`;
+
         // Touch swipe in the iframe to turn pages (mobile)
         addIframeSwipeListeners(doc);
 
@@ -459,8 +468,39 @@ nextBtn.onclick = () => { stopReading(); if (rendition) rendition.next(); };
 backBtn.onclick = closeReader;
 
 settingsBtn.onclick = () => settingsPanel.classList.toggle('hidden');
-decreaseFontBtn.onclick = () => { if (fontSize > 50) { fontSize -= 25; rendition?.themes.fontSize(`${fontSize}%`); } };
-increaseFontBtn.onclick = () => { if (fontSize < 400) { fontSize += 25; rendition?.themes.fontSize(`${fontSize}%`); } };
+decreaseFontBtn.onclick = () => {
+    if (fontSize > 50) {
+        fontSize -= 25;
+        localStorage.setItem('reader_fontSize', fontSize);
+        applyFontSize();
+    }
+};
+increaseFontBtn.onclick = () => {
+    if (fontSize < 400) {
+        fontSize += 25;
+        localStorage.setItem('reader_fontSize', fontSize);
+        applyFontSize();
+    }
+};
+
+function applyFontSize() {
+    // Apply via EPUB.js theme API
+    rendition?.themes.fontSize(`${fontSize}%`);
+    // Also inject directly into the iframe (more reliable on mobile)
+    try {
+        const contents = rendition?.getContents();
+        if (contents && contents.length) {
+            const doc = contents[0].document;
+            let styleEl = doc.getElementById('reader-font-size');
+            if (!styleEl) {
+                styleEl = doc.createElement('style');
+                styleEl.id = 'reader-font-size';
+                doc.head.appendChild(styleEl);
+            }
+            styleEl.textContent = `body, p, span, div { font-size: ${fontSize}% !important; }`;
+        }
+    } catch(e) {}
+}
 
 rateSelect.oninput = (e) => {
     rateValue.textContent = e.target.value + 'x';
