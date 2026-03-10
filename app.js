@@ -283,7 +283,7 @@ function handleTapToRead(doc, clientX, clientY) {
             const offset = range.startOffset;
             for (const tn of textNodes) {
                 if (tn.node === node) {
-                    clickedCharIndex = tn.start + (offset - Math.max(0, tn.nodeStart || 0));
+                    clickedCharIndex = tn.start + offset;
                     break;
                 }
             }
@@ -373,7 +373,7 @@ function injectHighlightStyleAndClickListener() {
                     if (textNodes.length) {
                         for (const tn of textNodes) {
                             if (tn.node === clickedNode) {
-                                clickedCharIndex = tn.start + (clickedOffset - Math.max(0, tn.nodeStart || 0));
+                                clickedCharIndex = tn.start + clickedOffset;
                                 break;
                             }
                         }
@@ -653,10 +653,13 @@ const _origResume = resumePlaying;
 // ─── Page text extraction ────────────────────────────────────────────────────
 
 // Build textNodes from the CURRENTLY VISIBLE epub column only.
+// epub.js paginated = CSS columns; each "page" is one column.
+// KEY: use defaultView.innerWidth (= 1 page viewport) NOT clientWidth (= all columns total).
 function buildVisibleTextNodes(doc) {
     const result = { textNodes: [], pageFullText: '' };
     const win    = doc.defaultView;
-    const vw     = win.innerWidth;
+    const vw     = win.innerWidth;   // true visible width (one column)
+    const vh     = win.innerHeight;  // true visible height
 
     const walk = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, null, false);
     let node;
@@ -665,76 +668,30 @@ function buildVisibleTextNodes(doc) {
     while ((node = walk.nextNode())) {
         const text = node.textContent;
         if (!text.trim()) continue;
-
-        // Use Range to get exact bounding boxes for this text node
+        
+        // Skip nodes entirely off-screen
+        let isVisible = false;
         range.selectNodeContents(node);
         const rects = range.getClientRects();
-        let isOnPrevPage = false;
-        let isOnCurrentPage = false;
-        let isOnNextPage = false;
-
+        
         for (let i = 0; i < rects.length; i++) {
             const r = rects[i];
-            if (r.width > 0 && r.height > 0) {
-                if (r.right <= 5) isOnPrevPage = true;
-                else if (r.left >= vw - 5) isOnNextPage = true;
-                else isOnCurrentPage = true;
+            if (r.width > 0 && r.height > 0 && r.right > 0 && r.left < vw && r.bottom > 0 && r.top < vh) {
+                isVisible = true;
+                break;
             }
         }
-
-        if (!isOnCurrentPage) continue;
-
-        let startChar = 0;
-        let endChar = text.length;
-
-        if (isOnPrevPage) {
-            let low = 0, high = text.length - 1;
-            startChar = text.length;
-            while(low <= high) {
-                let mid = Math.floor((low + high) / 2);
-                range.setStart(node, mid);
-                range.setEnd(node, Math.min(mid + 1, text.length));
-                let r = range.getBoundingClientRect();
-                if (r.width === 0 && mid < text.length - 1) {
-                    range.setEnd(node, text.length);
-                    r = range.getBoundingClientRect();
-                }
-                if (r.right <= 5) low = mid + 1;
-                else { startChar = mid; high = mid - 1; }
-            }
-        }
-
-        if (isOnNextPage) {
-            let low = startChar, high = text.length - 1;
-            endChar = text.length;
-            while(low <= high) {
-                let mid = Math.floor((low + high) / 2);
-                range.setStart(node, mid);
-                range.setEnd(node, Math.min(mid + 1, text.length));
-                let r = range.getBoundingClientRect();
-                if (r.width === 0 && mid < text.length - 1) {
-                    range.setEnd(node, text.length);
-                    r = range.getBoundingClientRect();
-                }
-                if (r.left >= vw - 5) { endChar = mid; high = mid - 1; }
-                else low = mid + 1;
-            }
-        }
-
-        const visibleTextForNode = text.substring(startChar, endChar);
-        if (!visibleTextForNode.trim()) continue;
+        
+        if (!isVisible) continue;
 
         result.textNodes.push({ 
             node,
             start: result.pageFullText.length,
-            end:   result.pageFullText.length + visibleTextForNode.length,
-            nodeStart: startChar,
-            nodeEnd: endChar
+            end:   result.pageFullText.length + text.length 
         });
-        result.pageFullText += visibleTextForNode;
+        result.pageFullText += text;
     }
-    
-    console.log(`[visible] ${result.textNodes.length} nœuds extirpés.`);
+    console.log(`[visible] ${result.textNodes.length} nœuds, ${result.pageFullText.length} chars}`);
     return result;
 }
 
@@ -870,13 +827,42 @@ function readSentence(idx) {
     utt.rate = parseFloat(rateSelect.value);
     utt.lang = voices[vIdx]?.lang || 'fr-FR';
 
+    let speechHasTurnedPage = false;
+
+    // Use a fast interval during speech to detect if the selection box has gone off-screen
+    // This is vastly more reliable than onboundary which is broken in many Firefox/Linux setups
+    const visibilityCheck = setInterval(() => {
+        if (!isPlaying || isPaused || speechHasTurnedPage || !iframeDoc) return;
+        
+        const sel = iframeDoc.getSelection();
+        if (!sel || sel.rangeCount === 0) return;
+        
+        const r = sel.getRangeAt(0).getBoundingClientRect();
+        const vw = iframeDoc.defaultView.innerWidth;
+        
+        // If the highlight box itself is now physically on the next page
+        if (r.left >= vw - 10) {
+            console.log('Phrase coupée détectée. Tourne la page maintenant.');
+            speechHasTurnedPage = true;
+            clearInterval(visibilityCheck);
+            
+            // Stop pronouncing the invisible text immediately
+            synth.cancel();
+            
+            // Turn page and read the NEXT visible text
+            autoTurnPageAndRead();
+        }
+    }, 50);
+
     utt.onend = () => {
-        if (isPlaying && !isPaused) readSentence(idx + 1);
+        clearInterval(visibilityCheck);
+        if (isPlaying && !isPaused && !speechHasTurnedPage) readSentence(idx + 1);
     };
     utt.onerror = (e) => {
+        clearInterval(visibilityCheck);
         if (e.error === 'canceled' || e.error === 'interrupted') return;
         console.error('TTS error:', e.error);
-        if (isPlaying && !isPaused) readSentence(idx + 1);
+        if (isPlaying && !isPaused && !speechHasTurnedPage) readSentence(idx + 1);
     };
 
     synth.speak(utt);
@@ -906,10 +892,10 @@ function highlightRange(charStart, length) {
 
         if (!startNode) {
             startNode   = tn.node;
-            startOffset = (tn.nodeStart || 0) + Math.max(0, charStart - tn.start);
+            startOffset = Math.max(0, charStart - tn.start);
         }
         endNode   = tn.node;
-        endOffset = (tn.nodeStart || 0) + Math.min((tn.nodeEnd || tn.node.textContent.length) - (tn.nodeStart || 0), charEnd - tn.start);
+        endOffset = Math.min(tn.node.textContent.length, charEnd - tn.start);
     }
 
     if (!startNode || !endNode) return;
