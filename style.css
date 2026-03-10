@@ -22,7 +22,10 @@ body {
     background-attachment: fixed;
     color: var(--text-color);
     overflow: hidden;
+    overscroll-behavior: none; /* block iOS bounce / Android overscroll */
     height: 100vh;
+    height: 100dvh; /* dynamic viewport = excludes browser UI bars on mobile */
+    width: 100vw;
 }
 
 #app {

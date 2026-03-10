@@ -862,7 +862,30 @@ function highlightRange(charStart, length) {
 
         const sel = iframeDoc.getSelection();
         sel.removeAllRanges();
+
+        // ── DEFEAT NATIVE BROWSER AUTO-SCROLL ──
+        // Browsers forcefully scroll when addRange is called. This destroys epubjs's
+        // multi-column paginated layout. We capture every possible scroll variable 
+        // and aggressively restore it synchronously right after the selection.
+        const ifWin = iframeDoc.defaultView;
+        const docEl = iframeDoc.documentElement;
+        const ifBody = iframeDoc.body;
+        const vc = document.querySelector('.viewer-container');
+
+        const sxIf  = ifWin.scrollX;     const syIf  = ifWin.scrollY;
+        const sxDoc = docEl.scrollLeft;  const syDoc = docEl.scrollTop;
+        const sxB   = ifBody.scrollLeft; const syB   = ifBody.scrollTop;
+        const sxVc  = vc.scrollLeft;     const syVc  = vc.scrollTop;
+        const sxWin = window.scrollX;    const syWin = window.scrollY;
+
         sel.addRange(range);
+
+        // Immediately force revert all scrolls
+        ifWin.scrollTo(sxIf, syIf);
+        docEl.scrollLeft = sxDoc;  docEl.scrollTop  = syDoc;
+        ifBody.scrollLeft = sxB;   ifBody.scrollTop = syB;
+        vc.scrollLeft = sxVc;      vc.scrollTop = syVc;
+        window.scrollTo(sxWin, syWin);
 
         // Instead of scrollIntoView() which breaks epub.js column rendering natively,
         // we check if the sentence is on the next or previous page
