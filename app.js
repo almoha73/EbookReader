@@ -727,65 +727,61 @@ const _origResume = resumePlaying;
 
 // ─── Page text extraction ────────────────────────────────────────────────────
 
-// Build textNodes from the CURRENTLY VISIBLE epub column only.
-// Uses EPUB.js's own CFI system: currentLocation().end.cfi is the last visible character.
-// We resolve this CFI to a DOM node via currentBook.getRange() and use
-// compareDocumentPosition() to exclude everything after that boundary.
-// Build textNodes from the CURRENTLY VISIBLE epub column only.
-//
-// KEY INSIGHT from debug data:
-//   - doc.defaultView.innerWidth = TOTAL layout width (e.g. 3056 = 8 columns × 382px)
-//   - rendition.currentLocation().start.displayed = { page: 5, total: 8 }
-//   - So current column occupies: [(page-1)*colWidth .. page*colWidth]
-//   - range.getBoundingClientRect() from inside the iframe gives full-layout coordinates
-//   → We simply include text nodes whose rect.left falls within the current column range.
-function buildVisibleTextNodes(doc) {
+// Build textNodes from the ENTIRE chapter (iframe body).
+// No coordinate filtering here, this guarantees paragraphs are never brutally sliced
+// and sentence boundary detection works perfectly.
+function buildChapterTextNodes(doc) {
     const result = { textNodes: [], pageFullText: '' };
     if (!doc) return result;
 
-    const loc       = rendition?.currentLocation();
-    const displayed = loc?.start?.displayed;
-    const totalPages = displayed?.total || 1;
-    const page       = displayed?.page  || 1;  // 1-based
-
-    const layoutWidth = doc.defaultView.innerWidth;  // total of all columns
-    const colWidth    = layoutWidth / totalPages;
-
-    // Coordinate range for the current page column in the full layout
-    const colStart = (page - 1) * colWidth;
-    const colEnd   = page * colWidth;
-
-    console.log(`[visible] col ${page}/${totalPages} → x:[${Math.round(colStart)}..${Math.round(colEnd)}] layoutW=${layoutWidth}`);
-
     const walk  = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, null, false);
-    const range = doc.createRange();
     let node;
 
     while ((node = walk.nextNode())) {
         const text = node.textContent;
-        if (!text.trim()) continue;
-
-        range.selectNodeContents(node);
-        const rect = range.getBoundingClientRect();
-
-        if (rect.width === 0 || rect.height === 0) continue;
-
-        // Node starts in the current column → include it
-        if (rect.left >= colStart && rect.left < colEnd) {
-            result.textNodes.push({ node,
-                start: result.pageFullText.length,
-                end:   result.pageFullText.length + text.length });
-            result.pageFullText += text;
+        // Don't skip empty nodes entirely if they contain spaces needed to un-stick words,
+        // but for simplicity we skip purely empty ones.
+        if (text.trim() === '') {
+            // Include a space if it's purely whitespace so words don't merge across spans
+            if (text.length > 0) {
+                result.textNodes.push({ node,
+                    start: result.pageFullText.length,
+                    end:   result.pageFullText.length + 1 });
+                result.pageFullText += ' ';
+            }
+            continue;
         }
-        // Node starts past the current column → stop (assuming DOM order = reading order)
-        else if (rect.left >= colEnd) {
+
+        result.textNodes.push({ node,
+            start: result.pageFullText.length,
+            end:   result.pageFullText.length + text.length });
+        result.pageFullText += text;
+    }
+    return result;
+}
+
+function getSentenceRect(doc, s) {
+    let offset = s.charStart;
+    // Skip leading whitespaces for more accurate rect positioning
+    while (offset < s.charStart + s.text.length && /\s/.test(pageFullText[offset])) { offset++; }
+    if (offset >= s.charStart + s.text.length) offset = s.charStart;
+
+    let targetNode = null;
+    let nodeOffset = 0;
+    for (let tn of textNodes) {
+        if (offset >= tn.start && offset < tn.end) {
+            targetNode = tn.node;
+            nodeOffset = offset - tn.start;
             break;
         }
-        // Node is before current column (colStart) → skip (prev page content)
     }
 
-    console.log(`[visible] ${result.textNodes.length} nœuds, ${result.pageFullText.length} chars`);
-    return result;
+    if (!targetNode) return { top:0, left:0, right:0, bottom:0, width:0, height:0 };
+
+    const range = doc.createRange();
+    range.setStart(targetNode, nodeOffset);
+    range.setEnd(targetNode, Math.min(nodeOffset + 1, targetNode.textContent.length));
+    return range.getBoundingClientRect();
 }
 
 // Find which sentence index contains the given character offset
@@ -802,34 +798,38 @@ function findSentenceIdx(charIndex) {
 async function startPageReadingThenSeek(seekCharIndex) {
     if (!isPlaying || isPaused || !rendition) return;
     stopSpeaking();
-    sentenceIdx  = 0;
-    sentences    = [];
-    textNodes    = [];
-    pageFullText = '';
-    iframeDoc    = null;
+    await initChapterReadingState();
 
-    if (!rendition.currentLocation()) return;
-    try {
-        const contentsArr = rendition.getContents();
-        if (!contentsArr || !contentsArr.length) return;
-        iframeDoc = contentsArr[0].document;
-    } catch(e) { return; }
-
-    const built = buildVisibleTextNodes(iframeDoc);
-    textNodes    = built.textNodes;
-    pageFullText = built.pageFullText;
-
-    if (!pageFullText.trim()) { if (isPlaying && !isPaused) rendition.next(); return; }
-    sentences = splitSentences(pageFullText);
-    if (!sentences.length) { if (isPlaying && !isPaused) rendition.next(); return; }
-
-    const startIdx = seekCharIndex >= 0 ? findSentenceIdx(seekCharIndex) : 0;
+    const startIdx = seekCharIndex >= 0 ? findSentenceIdx(seekCharIndex) : window.currentFirstVisibleSentence;
     readSentence(startIdx);
 }
 
 async function startPageReading() {
     if (!isPlaying || isPaused || !rendition) return;
     stopSpeaking();
+    await initChapterReadingState();
+
+    // Determine the start index:
+    // If we have a saved index in local storage from a previous read, use it.
+    // Otherwise fallback to the first visually visible sentence on the current page.
+    let startIdx = window.currentFirstVisibleSentence;
+    const savedSentenceIdx = parseInt(localStorage.getItem(`sentenceIdx_${currentBookId}`) || '-1', 10);
+    
+    // Resume from saved index if it is valid and belongs to the current page view
+    // or if we just manually switched pages (in which case we probably want the top of the page anyway, 
+    // but pendingAutoRead = true preserves the exact sentenceIdx over the turn)
+    if (savedSentenceIdx >= window.currentFirstVisibleSentence && savedSentenceIdx <= window.currentLastVisibleSentence) {
+        startIdx = savedSentenceIdx;
+        console.log('Reprise à la phrase n°', startIdx);
+    } else if (pendingAutoRead && savedSentenceIdx > window.currentLastVisibleSentence) {
+        // Fallback safety
+        startIdx = window.currentFirstVisibleSentence;
+    }
+
+    readSentence(startIdx);
+}
+
+async function initChapterReadingState() {
     sentenceIdx  = 0;
     sentences    = [];
     textNodes    = [];
@@ -843,25 +843,45 @@ async function startPageReading() {
         iframeDoc = contentsArr[0].document;
     } catch(e) { console.error('Cannot get iframe doc:', e); return; }
 
-    // Only collect text nodes from the VISIBLE column (not the whole chapter)
-    const built  = buildVisibleTextNodes(iframeDoc);
+    const built  = buildChapterTextNodes(iframeDoc);
     textNodes    = built.textNodes;
     pageFullText = built.pageFullText;
 
-    if (!pageFullText.trim()) { if (isPlaying && !isPaused) rendition.next(); return; }
+    if (!pageFullText.trim()) return;
     sentences = splitSentences(pageFullText);
-    if (!sentences.length) { if (isPlaying && !isPaused) rendition.next(); return; }
 
-    // If we're resuming on the same page where we paused, restore sentence position
-    const savedCfi         = localStorage.getItem(`cfi_${currentBookId}`);
-    const savedSentenceIdx = parseInt(localStorage.getItem(`sentenceIdx_${currentBookId}`) || '0', 10);
-    const currentPageCfi   = rendition.currentLocation()?.start?.cfi;
-    let startIdx = 0;
-    if (savedSentenceIdx > 0 && savedCfi && savedCfi === currentPageCfi && savedSentenceIdx < sentences.length) {
-        startIdx = savedSentenceIdx;
-        console.log('Reprise à la phrase n°', startIdx);
+    // Compute visual boundaries
+    const loc       = rendition.currentLocation();
+    const displayed = loc?.start?.displayed;
+    const totalPages = displayed?.total || 1;
+    const page       = displayed?.page  || 1;
+
+    const layoutWidth = iframeDoc.defaultView.innerWidth;
+    const colWidth    = layoutWidth / totalPages;
+    const colStart = (page - 1) * colWidth;
+    const colEnd   = page * colWidth;
+
+    window.currentFirstVisibleSentence = 0;
+    window.currentLastVisibleSentence = 0;
+    let foundFirst = false;
+
+    // Find which sentences fall in the current column viewport
+    for (let i = 0; i < sentences.length; i++) {
+        const rect = getSentenceRect(iframeDoc, sentences[i]);
+        if (rect.width === 0 && rect.height === 0) continue;
+
+        if (rect.right > colStart && rect.left < colEnd) {
+            if (!foundFirst) {
+                window.currentFirstVisibleSentence = i;
+                foundFirst = true;
+            }
+            window.currentLastVisibleSentence = i;
+        } else if (rect.left >= colEnd) {
+            break; // Gone past the right edge, no need to check further
+        }
     }
-    readSentence(startIdx);
+    
+    console.log(`[visible sentences] idx ${window.currentFirstVisibleSentence} to ${window.currentLastVisibleSentence}`);
 }
 
 function splitSentences(text) {
@@ -880,12 +900,22 @@ function splitSentences(text) {
 // ─── Sentence reader ──────────────────────────────────────────────────────────
 function readSentence(idx) {
     if (!isPlaying || isPaused) return;
-    if (idx >= sentences.length) {
+
+    // Determine if we need to turn the page
+    // (If sentences array is over, OR we passed the last visible sentence of the CURRENT page)
+    if (idx >= sentences.length || idx > window.currentLastVisibleSentence) {
         clearHighlight();
-        // Clear sentence position when page ends naturally
-        localStorage.removeItem(`sentenceIdx_${currentBookId}`);
+        
+        // If chapter is completely finished: go to next chapter
+        if (idx >= sentences.length) {
+            localStorage.removeItem(`sentenceIdx_${currentBookId}`);
+        } else {
+            // Otherwise, we are just turning the page. We MUST SAVE 'idx' so that 
+            // after rendition.next(), startPageReading picks it up seamlessly.
+            localStorage.setItem(`sentenceIdx_${currentBookId}`, idx);
+        }
+
         if (isPlaying && !isPaused) {
-            // Update lastSpeakTime so the watchdog doesn't fire during page-load silence
             lastSpeakTime = Date.now();
             pendingAutoRead = true;
             rendition?.next();
