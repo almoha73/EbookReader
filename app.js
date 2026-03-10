@@ -754,9 +754,11 @@ function startBackgroundSession() {
     // Do NOT fire if a page turn is pending (there's naturally silence during page load).
     clearInterval(silentWatchdog);
     silentWatchdog = setInterval(() => {
-        if (isPlaying && !isPaused && !pendingAutoRead && !synth.speaking && !synth.pending
+        const audioStopped = !synth.speaking && !synth.pending
+            && (!ttsAudioEl || ttsAudioEl.paused || ttsAudioEl.ended);
+        if (isPlaying && !isPaused && !pendingAutoRead && audioStopped
             && Date.now() - lastSpeakTime > 3000) {
-            console.warn('⚠ Watchdog: synthèse vocale stoppée de manière inattendue. Relance...');
+            console.warn('⚠ Watchdog: audio stoppé de manière inattendue. Relance...');
             if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
             // Check if HTML5 audio was suspended
             if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(()=>{});
@@ -800,10 +802,25 @@ function setupMediaSession() {
 
     // Lock screen buttons
     navigator.mediaSession.setActionHandler('play', () => {
-        if (!isPlaying || isPaused) resumePlaying();
+        if (isPaused) {
+            // Resume : relancer l'audio
+            isPaused = false;
+            setPlayIcon('pause');
+            requestWakeLock();
+            // Si ttsAudioEl est en pause, le relancer directement
+            if (ttsAudioEl && ttsAudioEl.paused && ttsAudioEl.src) {
+                ttsAudioEl.play().catch(() => readSentence(sentenceIdx));
+            } else {
+                readSentence(sentenceIdx);
+            }
+            navigator.mediaSession.playbackState = 'playing';
+        } else if (!isPlaying) {
+            startPlaying();
+        }
     });
     navigator.mediaSession.setActionHandler('pause', () => {
         if (isPlaying && !isPaused) pausePlaying();
+        navigator.mediaSession.playbackState = 'paused';
     });
     navigator.mediaSession.setActionHandler('nexttrack', () => {
         stopReading(); if (rendition) rendition.next();
@@ -830,10 +847,14 @@ document.addEventListener('visibilitychange', () => {
                 // Relancer l'audio silencieux si l'OS l'a mis en veille
                 if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
                 if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(() => {});
-                // Relancer le TTS uniquement s'il s'est vraiment arrêté
-                if (!synth.speaking && !synth.pending) {
-                    console.log('📱 TTS arrêté par l\'OS — relance depuis phrase', sentenceIdx);
+                // Relancer si le lecteur audio est en pause (ttsAudioEl) ou s'il n'est pas en train de jouer
+                const ttsPlaying = ttsAudioEl && !ttsAudioEl.paused;
+                const synthPlaying = synth.speaking && !synth.paused;
+                if (!ttsPlaying && !synthPlaying) {
+                    console.log('📱 Audio arrêté par l\'OS — relance depuis phrase', sentenceIdx);
                     readSentence(sentenceIdx);
+                } else if (ttsAudioEl && ttsAudioEl.paused) {
+                    ttsAudioEl.play().catch(() => {});
                 } else if (synth.paused) {
                     synth.resume();
                 }
