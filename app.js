@@ -54,8 +54,9 @@ let silentSource   = null;
 let silentAudioEl  = null;  // HTML5 audio element
 let silentWatchdog = null;  // interval that restarts speech if OS kills it
 let lastSpeakTime  = 0;     // debounce: avoids watchdog firing between sentences
-let wakeLock       = null;  // Screen Wake Lock to prevent screen from turning off
-let wasPlayingBeforeHidden = false; // track if we need to resume after screen on
+let wakeLock       = null;
+let wasPlayingBeforeHidden = false;
+let ttsAudioEl     = null;  // HTMLAudioElement pour Google Translate TTS (vrai MP3)
 
 
 // ─── Voice loading ────────────────────────────────────────────────────────────
@@ -700,6 +701,7 @@ function releaseWakeLock() {
 
 function stopSpeaking() {
     synth.cancel();
+    if (ttsAudioEl) { ttsAudioEl.pause(); ttsAudioEl.src = ''; }
     clearHighlight();
 }
 
@@ -1066,35 +1068,46 @@ function readSentence(idx) {
     // Highlight the sentence in the iframe DOM
     highlightRange(s.charStart, s.text.length);
 
-    // Ensure voices are loaded
-    if (!voicesReady) {
-        populateVoiceList();
-    }
-
-    const utt = new SpeechSynthesisUtterance(s.text);
     const vIdx = parseInt(voiceSelect.value, 10);
-    if (voices[vIdx]) utt.voice = voices[vIdx];
-    utt.rate = parseFloat(rateSelect.value);
-    utt.lang = voices[vIdx]?.lang || 'fr-FR';
+    const lang = voices[vIdx]?.lang || 'fr-FR';
+    const langCode = lang.split('-')[0];
+    const rate = parseFloat(rateSelect.value);
 
-    const startTime = Date.now();
+    // Google Translate TTS : vrai fichier MP3 lu via <audio>.
+    // Comme le podcatcher, Android considère ça comme de la musique
+    // et maintient la session active même écran éteint.
+    const textChunk = s.text.trim().substring(0, 200);
+    const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(textChunk)}&tl=${langCode}&client=tw-ob`;
 
-    utt.onend = () => {
+    if (!ttsAudioEl) ttsAudioEl = new Audio();
+    if (silentAudioEl && !silentAudioEl.paused) silentAudioEl.pause();
+
+    ttsAudioEl.onended = null;
+    ttsAudioEl.onerror = null;
+    ttsAudioEl.src = ttsUrl;
+    ttsAudioEl.playbackRate = Math.min(Math.max(rate, 0.5), 4.0);
+
+    ttsAudioEl.onended = () => {
         if (isPlaying && !isPaused) readSentence(idx + 1);
     };
-    utt.onerror = (e) => {
-        if (e.error === 'canceled' || e.error === 'interrupted') return;
-        console.error('TTS error:', e.error);
-        // En arrière-plan, le TTS peut échouer instantanément : on ne fait rien,
-        // le watchdog de l'événement visibilitychange prendra en charge la relance.
-        if (document.hidden) {
-            console.warn("⚠ TTS erreur en arrière-plan — attente du rallumage de l'écran");
-            return;
-        }
-        if (isPlaying && !isPaused) readSentence(idx + 1);
+    ttsAudioEl.onerror = () => {
+        // CORS ou réseau: fallback SpeechSynthesis
+        console.warn('[TTS] Google TTS échec — fallback SpeechSynthesis');
+        if (!voicesReady) populateVoiceList();
+        const utt = new SpeechSynthesisUtterance(s.text);
+        if (voices[vIdx]) utt.voice = voices[vIdx];
+        utt.rate = rate;
+        utt.lang = lang;
+        utt.onend = () => { if (isPlaying && !isPaused) readSentence(idx + 1); };
+        utt.onerror = (e) => {
+            if (e.error === 'canceled' || e.error === 'interrupted') return;
+            if (document.hidden) return;
+            if (isPlaying && !isPaused) readSentence(idx + 1);
+        };
+        synth.speak(utt);
     };
 
-    synth.speak(utt);
+    ttsAudioEl.play().catch(e => console.warn('[TTS] play() échoué:', e));
 }
 
 // ─── Highlighting via Selection API (non-destructive, no DOM mutation) ────────
