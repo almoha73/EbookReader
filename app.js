@@ -70,6 +70,7 @@ function populateVoiceList() {
 }
 
 // Call immediately AND on event (Chrome fires the event, Firefox already has them)
+console.log('EbookReader v20250310-b loaded');
 populateVoiceList();
 speechSynthesis.onvoiceschanged = () => { populateVoiceList(); };
 
@@ -470,20 +471,20 @@ nextBtn.onclick = () => { stopReading(); if (rendition) rendition.next(); };
 backBtn.onclick = closeReader;
 
 settingsBtn.onclick = () => settingsPanel.classList.toggle('hidden');
-decreaseFontBtn.onclick = () => {
+decreaseFontBtn.addEventListener('click', () => {
     if (fontSize > 50) {
         fontSize -= 25;
         localStorage.setItem('reader_fontSize', fontSize);
         applyFontSize();
     }
-};
-increaseFontBtn.onclick = () => {
+});
+increaseFontBtn.addEventListener('click', () => {
     if (fontSize < 400) {
         fontSize += 25;
         localStorage.setItem('reader_fontSize', fontSize);
         applyFontSize();
     }
-};
+});
 
 function applyFontSize() {
     const display = document.getElementById('font-size-display');
