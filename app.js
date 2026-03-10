@@ -190,15 +190,20 @@ async function openBook(meta) {
         currentCfi = loc.start.cfi;
         updateProgress();
         saveProgress(loc.start.cfi);
+
+        // relocated fires AFTER currentLocation() is updated with the new page coordinates.
+        // This is the right place to start reading (not 'rendered' which fires before
+        // EPUB.js updates location → buildVisibleTextNodes would use wrong column coords).
+        if (pendingAutoRead && isPlaying && !isPaused) {
+            pendingAutoRead = false;
+            lastSpeakTime = Date.now();
+            startPageReading();
+        }
     });
 
     rendition.on('rendered', () => {
         injectHighlightStyleAndClickListener();
-        // Auto-read the new page if TTS reached the end of the previous one
-        if (pendingAutoRead && isPlaying && !isPaused) {
-            pendingAutoRead = false;
-            setTimeout(() => startPageReading(), 350);
-        }
+        // Note: auto-read on page turn is handled via 'relocated' event (not here)
     });
 
     rendition.on('click', () => settingsPanel.classList.add('hidden'));
@@ -471,7 +476,7 @@ voiceSelect.onchange = () => {
 
 // Reconstruit les textNodes (invalides après clearHighlight/normalize)
 // puis reprend la lecture à la phrase courante
-function rebuildAndResume() {
+async function rebuildAndResume() {
     synth.cancel();
     clearHighlight();
     // Reconstruire la liste des textNodes depuis le DOM actuel
@@ -569,11 +574,10 @@ function startBackgroundSession() {
     }
 
     // Watchdog: if synth stops talking while we expect it to be reading, restart.
+    // Do NOT fire if a page turn is pending (there's naturally silence during page load).
     clearInterval(silentWatchdog);
     silentWatchdog = setInterval(() => {
-        // Only fire if we've been silent for > 3 s AND it's not just the normal
-        // gap between two sentences (lastSpeakTime tracks when synth.speak() was last called)
-        if (isPlaying && !isPaused && !synth.speaking && !synth.pending
+        if (isPlaying && !isPaused && !pendingAutoRead && !synth.speaking && !synth.pending
             && Date.now() - lastSpeakTime > 3000) {
             console.warn('⚠ Watchdog: synthèse vocale stoppée de manière inattendue. Relance...');
             if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
@@ -652,73 +656,70 @@ document.addEventListener('visibilitychange', () => {
 const _origPause = pausePlaying;
 const _origResume = resumePlaying;
 // We don't override here since they're declared later with identical names;
-// Built textNodes explicitly for BOTH current visible pane AND the next column
-// using epub.js internal column layout properties via getBoundingClientRect()
+// mediaSession state is updated in setPlayIcon
+
+
+// ─── Page text extraction ────────────────────────────────────────────────────
+
+// Build textNodes from the CURRENTLY VISIBLE epub column only.
+// Uses EPUB.js's own CFI system: currentLocation().end.cfi is the last visible character.
+// We resolve this CFI to a DOM node via currentBook.getRange() and use
+// compareDocumentPosition() to exclude everything after that boundary.
+// Build textNodes from the CURRENTLY VISIBLE epub column only.
+//
+// KEY INSIGHT from debug data:
+//   - doc.defaultView.innerWidth = TOTAL layout width (e.g. 3056 = 8 columns × 382px)
+//   - rendition.currentLocation().start.displayed = { page: 5, total: 8 }
+//   - So current column occupies: [(page-1)*colWidth .. page*colWidth]
+//   - range.getBoundingClientRect() from inside the iframe gives full-layout coordinates
+//   → We simply include text nodes whose rect.left falls within the current column range.
 function buildVisibleTextNodes(doc) {
     const result = { textNodes: [], pageFullText: '' };
-    const win    = doc.defaultView;
-    const vw     = win.innerWidth;
-    const vh     = win.innerHeight;
+    if (!doc) return result;
 
-    const walk = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, null, false);
+    const loc       = rendition?.currentLocation();
+    const displayed = loc?.start?.displayed;
+    const totalPages = displayed?.total || 1;
+    const page       = displayed?.page  || 1;  // 1-based
+
+    const layoutWidth = doc.defaultView.innerWidth;  // total of all columns
+    const colWidth    = layoutWidth / totalPages;
+
+    // Coordinate range for the current page column in the full layout
+    const colStart = (page - 1) * colWidth;
+    const colEnd   = page * colWidth;
+
+    console.log(`[visible] col ${page}/${totalPages} → x:[${Math.round(colStart)}..${Math.round(colEnd)}] layoutW=${layoutWidth}`);
+
+    const walk  = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, null, false);
+    const range = doc.createRange();
     let node;
+
     while ((node = walk.nextNode())) {
         const text = node.textContent;
         if (!text.trim()) continue;
-        
-        const parent = node.parentElement;
-        if (parent) {
-            const r = parent.getBoundingClientRect();
-            if (r.width === 0 || r.height === 0) continue; 
-            
-            // Accept the current page (0 to vw) AND the next page (vw to vw*2)
-            // This allows sentences cut exactly at the boundary or starting on the next page
-            // to exist in the `sentences` array without being abruptly cut out.
-            if (r.left >= vw * 2) continue;
-            if (r.right <= 0) continue;
-            if (r.bottom <= 0 || r.top >= vh) continue;
+
+        range.selectNodeContents(node);
+        const rect = range.getBoundingClientRect();
+
+        if (rect.width === 0 || rect.height === 0) continue;
+
+        // Node starts in the current column → include it
+        if (rect.left >= colStart && rect.left < colEnd) {
+            result.textNodes.push({ node,
+                start: result.pageFullText.length,
+                end:   result.pageFullText.length + text.length });
+            result.pageFullText += text;
         }
-        result.textNodes.push({ 
-            node,
-            start: result.pageFullText.length,
-            end:   result.pageFullText.length + text.length 
-        });
-        result.pageFullText += text;
-    }
-    return result;
-}
-
-// Determines if a sentence index is visually located strictly on the next page
-function isSentenceOnNextPage(doc, charStart, charEnd) {
-    if (!doc || !textNodes.length) return false;
-
-    // Use a slightly shifted start just in case charStart falls exactly on an invisible space
-    let checkPos = charStart;
-    let startNode = null, startOffset = 0;
-    
-    for (const tn of textNodes) {
-        if (tn.end > checkPos) {
-            startNode = tn.node;
-            startOffset = Math.max(0, checkPos - tn.start);
+        // Node starts past the current column → stop (assuming DOM order = reading order)
+        else if (rect.left >= colEnd) {
             break;
         }
+        // Node is before current column (colStart) → skip (prev page content)
     }
-    if (!startNode) return false;
 
-    try {
-        const range = doc.createRange();
-        range.setStart(startNode, startOffset);
-        // Expand the check slightly into the word to get a solid layout box
-        range.setEnd(startNode, Math.min(startOffset + 3, startNode.textContent.length));
-        
-        const rect = range.getBoundingClientRect();
-        const vw = doc.defaultView.innerWidth;
-
-        // The sentence physically starts on or past the right edge (column 2)
-        return (rect.left >= vw - 10 && rect.width > 0);
-    } catch(e) {
-        return false;
-    }
+    console.log(`[visible] ${result.textNodes.length} nœuds, ${result.pageFullText.length} chars`);
+    return result;
 }
 
 // Find which sentence index contains the given character offset
@@ -785,21 +786,15 @@ async function startPageReading() {
     sentences = splitSentences(pageFullText);
     if (!sentences.length) { if (isPlaying && !isPaused) rendition.next(); return; }
 
+    // If we're resuming on the same page where we paused, restore sentence position
     const savedCfi         = localStorage.getItem(`cfi_${currentBookId}`);
     const savedSentenceIdx = parseInt(localStorage.getItem(`sentenceIdx_${currentBookId}`) || '0', 10);
     const currentPageCfi   = rendition.currentLocation()?.start?.cfi;
     let startIdx = 0;
-    
-    // If we're resuming on the same CFI, resume from the exact sentence index
     if (savedSentenceIdx > 0 && savedCfi && savedCfi === currentPageCfi && savedSentenceIdx < sentences.length) {
         startIdx = savedSentenceIdx;
         console.log('Reprise à la phrase n°', startIdx);
-    } else if (savedSentenceIdx > 0) {
-        // If the CFI changed (page turn) but we wanted to auto-read, start at sentence 0 of the new page
-        localStorage.setItem(`sentenceIdx_${currentBookId}`, 0);
-        startIdx = 0;
     }
-    
     readSentence(startIdx);
 }
 
@@ -824,7 +819,9 @@ function readSentence(idx) {
         // Clear sentence position when page ends naturally
         localStorage.removeItem(`sentenceIdx_${currentBookId}`);
         if (isPlaying && !isPaused) {
-            pendingAutoRead = true;   // will be consumed by the 'rendered' event
+            // Update lastSpeakTime so the watchdog doesn't fire during page-load silence
+            lastSpeakTime = Date.now();
+            pendingAutoRead = true;
             rendition?.next();
         }
         return;
@@ -836,21 +833,7 @@ function readSentence(idx) {
     lastSpeakTime = Date.now();
     const s = sentences[idx];
 
-    // Core "Play Books" logic: BEFORE reading this new sentence,
-    // if we detect it is strictly on the next page, we STOP right here,
-    // turn the page, and RE-START reading this exact index on the new page view.
-    // The previous utterance has already finished properly.
-    if (isSentenceOnNextPage(iframeDoc, s.charStart, s.charStart + s.text.length)) {
-        console.log('Phrase sur la page suivante détectée entre deux lectures ! Tourner la page.');
-        if (isPlaying && !isPaused) {
-            pendingAutoRead = true;
-            localStorage.setItem(`sentenceIdx_${currentBookId}`, 0); // start fresh on new page
-            rendition?.next();
-        }
-        return; // Do not highlight or speak it !
-    }
-
-    // Otherwise, the sentence is at least partially visible here. Highlighting and reading it!
+    // Highlight the sentence in the iframe DOM
     highlightRange(s.charStart, s.text.length);
 
     // Ensure voices are loaded
@@ -865,8 +848,6 @@ function readSentence(idx) {
     utt.lang = voices[vIdx]?.lang || 'fr-FR';
 
     utt.onend = () => {
-        // When this sentence is officially done, trigger the next one.
-        // If the NEXT one happens to be on the next page, it will be caught by the check above.
         if (isPlaying && !isPaused) readSentence(idx + 1);
     };
     utt.onerror = (e) => {
@@ -919,10 +900,14 @@ function highlightRange(charStart, length) {
         sel.removeAllRanges();
 
         // Block the browser's auto-scroll when adding selection.
+        // We cancel the scroll on the iframe window immediately after.
         const ifWin = iframeDoc.defaultView;
         const sx = ifWin.scrollX, sy = ifWin.scrollY;
         sel.addRange(range);
         ifWin.scrollTo(sx, sy);
+
+        // No rect-based page detection needed: sentences[] now only contains
+        // the current visible page, so page turns happen naturally when idx >= sentences.length.
     } catch(e) {
         console.error('Highlight error:', e);
     }
