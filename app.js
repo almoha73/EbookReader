@@ -230,25 +230,92 @@ function addSwipeListeners(el) {
     }, { passive: true });
 }
 
-// Also attach swipe listeners inside the EPUB iframe after each page renders
+// Unified touch handler inside the EPUB iframe:
+//   - Short tap (< 15 px movement) → click-to-read at the touched position
+//   - Horizontal swipe (> 50 px)   → next / prev page
 function addIframeSwipeListeners(doc) {
     if (!doc) return;
+
+    let tapStartX = 0, tapStartY = 0, tapStartTime = 0;
+
     doc.addEventListener('touchstart', (e) => {
-        swipeTouchStartX = e.changedTouches[0].screenX;
-        swipeTouchStartY = e.changedTouches[0].screenY;
+        const t = e.changedTouches[0];
+        swipeTouchStartX = t.screenX;
+        swipeTouchStartY = t.screenY;
+        tapStartX = t.clientX;   // client coords for caretRangeFromPoint
+        tapStartY = t.clientY;
+        tapStartTime = Date.now();
     }, { passive: true });
 
     doc.addEventListener('touchend', (e) => {
-        const dx = e.changedTouches[0].screenX - swipeTouchStartX;
-        const dy = e.changedTouches[0].screenY - swipeTouchStartY;
-        if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy)) return;
+        const t = e.changedTouches[0];
+        const dx = t.screenX - swipeTouchStartX;
+        const dy = t.screenY - swipeTouchStartY;
+        const dist = Math.hypot(dx, dy);
 
-        if (dx < 0) {
-            stopReading(); if (rendition) rendition.next();
-        } else {
-            stopReading(); if (rendition) rendition.prev();
+        // ── TAP (< 15 px, < 400 ms): start / redirect reading ──
+        if (dist < 15 && Date.now() - tapStartTime < 400) {
+            handleTapToRead(doc, tapStartX, tapStartY);
+            return;
+        }
+
+        // ── SWIPE (horizontal, > 50 px): page turn ──
+        if (Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(dy)) {
+            if (dx < 0) { stopReading(); if (rendition) rendition.next(); }
+            else        { stopReading(); if (rendition) rendition.prev(); }
         }
     }, { passive: true });
+}
+
+// Find the tapped sentence in the iframe and start / redirect reading
+function handleTapToRead(doc, clientX, clientY) {
+    let clickedCharIndex = -1;
+    try {
+        let range;
+        if (doc.caretRangeFromPoint) {
+            range = doc.caretRangeFromPoint(clientX, clientY);
+        } else if (doc.caretPositionFromPoint) {
+            const pos = doc.caretPositionFromPoint(clientX, clientY);
+            if (pos) { range = doc.createRange(); range.setStart(pos.offsetNode, pos.offset); }
+        }
+        if (range && textNodes.length) {
+            const node   = range.startContainer;
+            const offset = range.startOffset;
+            for (const tn of textNodes) {
+                if (tn.node === node) {
+                    clickedCharIndex = tn.start + offset;
+                    break;
+                }
+            }
+        }
+    } catch(err) {
+        console.error('handleTapToRead error:', err);
+    }
+
+    if (!isPlaying) {
+        // Start reading from the tapped sentence
+        isPlaying   = true;
+        isPaused    = false;
+        sentenceIdx = 0;
+        setPlayIcon('pause');
+        startBackgroundSession();
+        startPageReadingThenSeek(clickedCharIndex);
+    } else if (isPaused) {
+        isPaused = false;
+        setPlayIcon('pause');
+        if (clickedCharIndex >= 0 && sentences.length) {
+            synth.cancel();
+            sentenceIdx = findSentenceIdx(clickedCharIndex);
+        }
+        readSentence(sentenceIdx);
+    } else {
+        // Already playing — jump to tapped sentence
+        if (clickedCharIndex >= 0 && sentences.length) {
+            synth.cancel();
+            sentenceIdx = findSentenceIdx(clickedCharIndex);
+            setTimeout(() => readSentence(sentenceIdx), 80);
+        }
+    }
 }
 
 function injectHighlightStyleAndClickListener() {
