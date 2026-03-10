@@ -44,6 +44,7 @@ let activeMarkEls    = [];  // <mark> elements currently in DOM
 let audioCtx       = null;
 let silentSource   = null;
 let silentWatchdog = null;  // interval that restarts speech if OS kills it
+let lastSpeakTime  = 0;     // debounce: avoids watchdog firing between sentences
 
 
 // ─── Voice loading ────────────────────────────────────────────────────────────
@@ -475,17 +476,10 @@ function rebuildAndResume() {
     pageFullText = '';
     if (!iframeDoc) return;
     try {
-        const walk = iframeDoc.createTreeWalker(iframeDoc.body, NodeFilter.SHOW_TEXT, null, false);
-        let node;
-        while ((node = walk.nextNode())) {
-            const text = node.textContent;
-            if (text.trim()) {
-                textNodes.push({ node, start: pageFullText.length, end: pageFullText.length + text.length });
-                pageFullText += text;
-            }
-        }
-        // Reconstruire les phrases à partir du même texte
-        sentences = splitSentences(pageFullText);
+        const built  = buildVisibleTextNodes(iframeDoc);
+        textNodes    = built.textNodes;
+        pageFullText = built.pageFullText;
+        sentences    = splitSentences(pageFullText);
     } catch(e) { console.error('rebuildAndResume error:', e); return; }
     readSentence(sentenceIdx);
 }
@@ -573,12 +567,12 @@ function startBackgroundSession() {
     // Watchdog: if synth stops talking while we expect it to be reading, restart.
     clearInterval(silentWatchdog);
     silentWatchdog = setInterval(() => {
-        if (isPlaying && !isPaused && !synth.speaking && !synth.pending) {
+        // Only fire if we've been silent for > 3 s AND it's not just the normal
+        // gap between two sentences (lastSpeakTime tracks when synth.speak() was last called)
+        if (isPlaying && !isPaused && !synth.speaking && !synth.pending
+            && Date.now() - lastSpeakTime > 3000) {
             console.warn('⚠ Watchdog: synthèse vocale stoppée de manière inattendue. Relance...');
-            // Restart AudioContext if it was suspended by the OS
-            if (audioCtx && audioCtx.state === 'suspended') {
-                audioCtx.resume().catch(() => {});
-            }
+            if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
             readSentence(sentenceIdx);
         }
     }, 2000);
@@ -659,6 +653,30 @@ const _origResume = resumePlaying;
 
 // ─── Page text extraction ────────────────────────────────────────────────────
 
+// Build textNodes from the CURRENTLY VISIBLE epub column only.
+// epub.js paginated mode loads the whole chapter in one iframe but displays
+// it as CSS columns. getBoundingClientRect() tells us which nodes are on-screen.
+function buildVisibleTextNodes(doc) {
+    const result      = { textNodes: [], pageFullText: '' };
+    const viewWidth   = doc.documentElement.clientWidth;
+    const walk = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT, null, false);
+    let node;
+    while ((node = walk.nextNode())) {
+        const text = node.textContent;
+        if (!text.trim()) continue;
+        // Only include if the parent element falls on the visible column
+        const parent = node.parentElement;
+        if (parent) {
+            const r = parent.getBoundingClientRect();
+            // Skip nodes off-screen to the right (next column) or left (prev column)
+            if (r.right <= 2 || r.left >= viewWidth - 2) continue;
+        }
+        result.textNodes.push({ node, start: result.pageFullText.length, end: result.pageFullText.length + text.length });
+        result.pageFullText += text;
+    }
+    return result;
+}
+
 // Find which sentence index contains the given character offset
 function findSentenceIdx(charIndex) {
     if (charIndex < 0 || !sentences.length) return 0;
@@ -670,7 +688,6 @@ function findSentenceIdx(charIndex) {
     return targetIdx;
 }
 
-// Same as startPageReading but seeks to a specific char offset after parsing
 async function startPageReadingThenSeek(seekCharIndex) {
     if (!isPlaying || isPaused || !rendition) return;
     stopSpeaking();
@@ -680,33 +697,21 @@ async function startPageReadingThenSeek(seekCharIndex) {
     pageFullText = '';
     iframeDoc    = null;
 
-    const loc = rendition.currentLocation();
-    if (!loc) return;
-
+    if (!rendition.currentLocation()) return;
     try {
         const contentsArr = rendition.getContents();
         if (!contentsArr || !contentsArr.length) return;
         iframeDoc = contentsArr[0].document;
     } catch(e) { return; }
 
-    try {
-        const walk = iframeDoc.createTreeWalker(iframeDoc.body, NodeFilter.SHOW_TEXT, null, false);
-        let node;
-        while ((node = walk.nextNode())) {
-            const text = node.textContent;
-            if (text.trim()) {
-                textNodes.push({ node, start: pageFullText.length, end: pageFullText.length + text.length });
-                pageFullText += text;
-            }
-        }
-    } catch(e) { return; }
+    const built = buildVisibleTextNodes(iframeDoc);
+    textNodes    = built.textNodes;
+    pageFullText = built.pageFullText;
 
     if (!pageFullText.trim()) { if (isPlaying && !isPaused) rendition.next(); return; }
-
     sentences = splitSentences(pageFullText);
     if (!sentences.length) { if (isPlaying && !isPaused) rendition.next(); return; }
 
-    // Seek to clicked sentence if we have a valid position
     const startIdx = seekCharIndex >= 0 ? findSentenceIdx(seekCharIndex) : 0;
     readSentence(startIdx);
 }
@@ -720,43 +725,24 @@ async function startPageReading() {
     pageFullText = '';
     iframeDoc    = null;
 
-    const loc = rendition.currentLocation();
-    if (!loc) return;
-
-    // Get the iframe document
+    if (!rendition.currentLocation()) return;
     try {
         const contentsArr = rendition.getContents();
         if (!contentsArr || !contentsArr.length) return;
         iframeDoc = contentsArr[0].document;
     } catch(e) { console.error('Cannot get iframe doc:', e); return; }
 
-    // Build text content from the visible body
-    try {
-        const walk = iframeDoc.createTreeWalker(iframeDoc.body, NodeFilter.SHOW_TEXT, null, false);
-        let node;
-        while ((node = walk.nextNode())) {
-            const text = node.textContent;
-            if (text.trim()) {
-                textNodes.push({ node, start: pageFullText.length, end: pageFullText.length + text.length });
-                pageFullText += text;
-            }
-        }
-    } catch(e) { console.error('Text walk error:', e); return; }
+    // Only collect text nodes from the VISIBLE column (not the whole chapter)
+    const built  = buildVisibleTextNodes(iframeDoc);
+    textNodes    = built.textNodes;
+    pageFullText = built.pageFullText;
 
-    if (!pageFullText.trim()) {
-        if (isPlaying && !isPaused) rendition.next();
-        return;
-    }
-
-    // Split into sentences
+    if (!pageFullText.trim()) { if (isPlaying && !isPaused) rendition.next(); return; }
     sentences = splitSentences(pageFullText);
-    if (!sentences.length) {
-        if (isPlaying && !isPaused) rendition.next();
-        return;
-    }
+    if (!sentences.length) { if (isPlaying && !isPaused) rendition.next(); return; }
 
     // If we're resuming on the same page where we paused, restore sentence position
-    const savedCfi    = localStorage.getItem(`cfi_${currentBookId}`);
+    const savedCfi         = localStorage.getItem(`cfi_${currentBookId}`);
     const savedSentenceIdx = parseInt(localStorage.getItem(`sentenceIdx_${currentBookId}`) || '0', 10);
     const currentPageCfi   = rendition.currentLocation()?.start?.cfi;
     let startIdx = 0;
@@ -764,7 +750,6 @@ async function startPageReading() {
         startIdx = savedSentenceIdx;
         console.log('Reprise à la phrase n°', startIdx);
     }
-
     readSentence(startIdx);
 }
 
@@ -795,6 +780,7 @@ function readSentence(idx) {
     sentenceIdx = idx;
     // Save sentence index synchronously so it survives F5
     localStorage.setItem(`sentenceIdx_${currentBookId}`, idx);
+    lastSpeakTime = Date.now();
     const s = sentences[idx];
 
     // Highlight the sentence in the iframe DOM
@@ -863,43 +849,15 @@ function highlightRange(charStart, length) {
         const sel = iframeDoc.getSelection();
         sel.removeAllRanges();
 
-        // ── DEFEAT NATIVE BROWSER AUTO-SCROLL ──
-        // Browsers forcefully scroll when addRange is called. This destroys epubjs's
-        // multi-column paginated layout. We capture every possible scroll variable 
-        // and aggressively restore it synchronously right after the selection.
+        // Block the browser's auto-scroll when adding selection.
+        // We cancel the scroll on the iframe window immediately after.
         const ifWin = iframeDoc.defaultView;
-        const docEl = iframeDoc.documentElement;
-        const ifBody = iframeDoc.body;
-        const vc = document.querySelector('.viewer-container');
-
-        const sxIf  = ifWin.scrollX;     const syIf  = ifWin.scrollY;
-        const sxDoc = docEl.scrollLeft;  const syDoc = docEl.scrollTop;
-        const sxB   = ifBody.scrollLeft; const syB   = ifBody.scrollTop;
-        const sxVc  = vc.scrollLeft;     const syVc  = vc.scrollTop;
-        const sxWin = window.scrollX;    const syWin = window.scrollY;
-
+        const sx = ifWin.scrollX, sy = ifWin.scrollY;
         sel.addRange(range);
+        ifWin.scrollTo(sx, sy);
 
-        // Immediately force revert all scrolls
-        ifWin.scrollTo(sxIf, syIf);
-        docEl.scrollLeft = sxDoc;  docEl.scrollTop  = syDoc;
-        ifBody.scrollLeft = sxB;   ifBody.scrollTop = syB;
-        vc.scrollLeft = sxVc;      vc.scrollTop = syVc;
-        window.scrollTo(sxWin, syWin);
-
-        // Instead of scrollIntoView() which breaks epub.js column rendering natively,
-        // we check if the sentence is on the next or previous page
-        const rect = range.getBoundingClientRect();
-        const winWidth = iframeDoc.documentElement.clientWidth;
-
-        // If sentence starts fully off-screen to the right (next page)
-        if (rect.left >= winWidth - 10) {
-            if (rendition) rendition.next();
-        } 
-        // If sentence is off-screen to the left (prev page)
-        else if (rect.right < 10) {
-            if (rendition) rendition.prev();
-        }
+        // No rect-based page detection needed: sentences[] now only contains
+        // the current visible page, so page turns happen naturally when idx >= sentences.length.
     } catch(e) {
         console.error('Highlight error:', e);
     }
