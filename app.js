@@ -662,7 +662,12 @@ function resumePlaying() {
     isPaused = false;
     setPlayIcon('pause');
     requestWakeLock();
-    readSentence(sentenceIdx);
+    startBackgroundSession(); // Relancer la session si elle a été suspendue
+    if (ttsAudioEl && ttsAudioEl.paused && ttsAudioEl.src) {
+        ttsAudioEl.play().catch(() => readSentence(sentenceIdx));
+    } else {
+        readSentence(sentenceIdx);
+    }
 }
 
 function stopReading() {
@@ -802,20 +807,12 @@ function setupMediaSession() {
 
     // Lock screen buttons
     navigator.mediaSession.setActionHandler('play', () => {
-        if (isPaused) {
-            // Resume : relancer l'audio
-            isPaused = false;
-            setPlayIcon('pause');
-            requestWakeLock();
-            // Si ttsAudioEl est en pause, le relancer directement
-            if (ttsAudioEl && ttsAudioEl.paused && ttsAudioEl.src) {
-                ttsAudioEl.play().catch(() => readSentence(sentenceIdx));
-            } else {
-                readSentence(sentenceIdx);
-            }
-            navigator.mediaSession.playbackState = 'playing';
-        } else if (!isPlaying) {
+        console.log('MediaSession action: play');
+        if (!isPlaying) {
             startPlaying();
+        } else if (isPaused) {
+            resumePlaying();
+            navigator.mediaSession.playbackState = 'playing';
         }
     });
     navigator.mediaSession.setActionHandler('pause', () => {
