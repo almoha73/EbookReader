@@ -103,6 +103,8 @@ body {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
     gap: 2rem;
+    align-items: start;
+    align-content: start;
     flex: 1;
 }
 
