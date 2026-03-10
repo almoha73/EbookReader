@@ -810,13 +810,15 @@ function setupMediaSession() {
         console.log('MediaSession action: play');
         if (!isPlaying) {
             startPlaying();
-        } else if (isPaused) {
+        } else {
+            // Force resume même si notre variable isPaused est fausse,
+            // car l'OS a pu suspendre le contexte audio sans nous prévenir.
             resumePlaying();
             navigator.mediaSession.playbackState = 'playing';
         }
     });
     navigator.mediaSession.setActionHandler('pause', () => {
-        if (isPlaying && !isPaused) pausePlaying();
+        if (isPlaying) pausePlaying();
         navigator.mediaSession.playbackState = 'paused';
     });
     navigator.mediaSession.setActionHandler('nexttrack', () => {
