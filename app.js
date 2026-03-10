@@ -206,12 +206,14 @@ async function openBook(meta) {
         saveProgress(loc.start.cfi);
 
         // relocated fires AFTER currentLocation() is updated with the new page coordinates.
-        // This is the right place to start reading (not 'rendered' which fires before
-        // EPUB.js updates location → buildVisibleTextNodes would use wrong column coords).
         if (pendingAutoRead && isPlaying && !isPaused) {
             pendingAutoRead = false;
             lastSpeakTime = Date.now();
             startPageReading();
+        } else if (isPlaying && !isPaused) {
+            // Lecture synchrone intra-chapitre : mettons à jour les limites visuelles de la nouvelle page
+            // de façon asynchrone sans couper le flux audio continu (Android background bypass)
+            if (typeof updateVisualBoundariesOnly === 'function') updateVisualBoundariesOnly();
         }
     });
 
@@ -931,6 +933,12 @@ async function initChapterReadingState() {
     if (!pageFullText.trim()) return;
     sentences = splitSentences(pageFullText);
 
+    updateVisualBoundariesOnly();
+}
+
+function updateVisualBoundariesOnly() {
+    if (!iframeDoc || !sentences.length || !rendition) return;
+
     // Compute visual boundaries
     const loc       = rendition.currentLocation();
     const displayed = loc?.start?.displayed;
@@ -943,7 +951,8 @@ async function initChapterReadingState() {
     const colEnd   = page * colWidth;
 
     window.currentFirstVisibleSentence = 0;
-    window.currentLastVisibleSentence = 0;
+    // VERY IMPORTANT: fallback to end of chapter if calculation fails
+    window.currentLastVisibleSentence = sentences.length - 1; 
     let foundFirst = false;
 
     // Find which sentences fall in the current column viewport
@@ -962,7 +971,7 @@ async function initChapterReadingState() {
         }
     }
     
-    console.log(`[visible sentences] idx ${window.currentFirstVisibleSentence} to ${window.currentLastVisibleSentence}`);
+    console.log(`[bounds updated] page ${page}/${totalPages}, idx ${window.currentFirstVisibleSentence} to ${window.currentLastVisibleSentence}`);
 }
 
 function splitSentences(text) {
@@ -982,30 +991,32 @@ function splitSentences(text) {
 function readSentence(idx) {
     if (!isPlaying || isPaused) return;
 
-    // Determine if we need to turn the page
-    // (If sentences array is over, OR we passed the last visible sentence of the CURRENT page)
-    if (idx >= sentences.length || idx > window.currentLastVisibleSentence) {
+    // FIN DE CHAPITRE (tableau de phrases épuisé) : on doit charger le fichier HTML suivant.
+    // L'audio s'arrête le temps du calcul, donc ça coupera si Android ferme l'accès écran éteint.
+    if (idx >= sentences.length) {
         clearHighlight();
-        
-        // If chapter is completely finished: go to next chapter
-        if (idx >= sentences.length) {
-            localStorage.removeItem(`sentenceIdx_${currentBookId}`);
-        } else {
-            // Otherwise, we are just turning the page. We MUST SAVE 'idx' so that 
-            // after rendition.next(), startPageReading picks it up seamlessly.
-            localStorage.setItem(`sentenceIdx_${currentBookId}`, idx);
-        }
-
+        localStorage.removeItem(`sentenceIdx_${currentBookId}`);
         if (isPlaying && !isPaused) {
             lastSpeakTime = Date.now();
-            pendingAutoRead = true;
+            pendingAutoRead = true; // wait for 'relocated' to trigger read
             rendition?.next();
         }
         return;
     }
 
+    // FIN DE PAGE (mais même chapitre) : audio continu synchronisé
+    // On tourne VISUELLEMENT, mais l'audio s'enchaîne de façon continue dans le code
+    // L'OS Android maintiendra le flux audio puisque le SpeechSynthesis ne s'arrête pas !
+    if (idx > window.currentLastVisibleSentence) {
+        if (isPlaying && !isPaused) {
+            // Empêche de relancer rendition.next() en boucle avant que 'relocated' ne mette à jour la limite
+            window.currentLastVisibleSentence = sentences.length;
+            rendition?.next();
+            // On NE FAIT PAS return ! On continue à parler immédiatement pour garder l'OS éveillé !
+        }
+    }
+
     sentenceIdx = idx;
-    // Save sentence index synchronously so it survives F5
     localStorage.setItem(`sentenceIdx_${currentBookId}`, idx);
     lastSpeakTime = Date.now();
     const s = sentences[idx];
@@ -1024,12 +1035,27 @@ function readSentence(idx) {
     utt.rate = parseFloat(rateSelect.value);
     utt.lang = voices[vIdx]?.lang || 'fr-FR';
 
+    const startTime = Date.now();
+
     utt.onend = () => {
+        const elapsed = Date.now() - startTime;
+        if (elapsed < 50) {
+            console.warn("⚠ TTS onend instantané (OS bloqué en arrière-plan). Mise en pause de sécurité.");
+            pausePlaying();
+            return;
+        }
         if (isPlaying && !isPaused) readSentence(idx + 1);
     };
     utt.onerror = (e) => {
         if (e.error === 'canceled' || e.error === 'interrupted') return;
         console.error('TTS error:', e.error);
+        const elapsed = Date.now() - startTime;
+        // On lock sur erreur forte instantanée en background pour éviter qu'il lise/passe tout le livre en 1 s !
+        if (elapsed < 50 || document.hidden) {
+            console.warn("⚠ TTS erreur système contournée en arrière-plan. Mise en pause.");
+            pausePlaying();
+            return;
+        }
         if (isPlaying && !isPaused) readSentence(idx + 1);
     };
 
