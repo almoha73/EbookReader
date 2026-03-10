@@ -364,7 +364,13 @@ function injectHighlightStyleAndClickListener() {
             fontSizeEl.id = 'reader-font-size';
             doc.head.appendChild(fontSizeEl);
         }
-        fontSizeEl.textContent = `html { zoom: ${fontSize / 100} !important; -webkit-text-size-adjust: none !important; text-size-adjust: none !important; }`;
+        // font-size en px + héritage forcé : évite zoom (qui casse le layout EPUB) et
+        // les conflits avec les font-size en px/pt définis par l'EPUB lui-même.
+        const basePx = Math.round(16 * fontSize / 100);
+        fontSizeEl.textContent = `
+            html { font-size: ${basePx}px !important; }
+            body * { font-size: inherit !important; }
+        `;
 
         // Touch swipe in the iframe to turn pages (mobile)
         addIframeSwipeListeners(doc);
@@ -490,15 +496,17 @@ function applyFontSize() {
     const display = document.getElementById('font-size-display');
     if (display) display.textContent = fontSize + '%';
 
+    // Ajuste la taille du panneau paramètres (DOM parent, hors iframe)
     const settingsPanelEl = document.getElementById('settings-panel');
     if (settingsPanelEl) settingsPanelEl.style.fontSize = (fontSize / 100) + 'rem';
 
     if (!rendition) return;
 
-    const scale = fontSize / 100;
+    // font-size en px absolus pour l'iframe courante
+    const basePx = Math.round(16 * fontSize / 100);
+    const css = `html { font-size: ${basePx}px !important; } body * { font-size: inherit !important; }`;
 
-    // Méthode 1 : zoom CSS sur l'iframe (Chrome/Android/Safari - pas Firefox)
-    // zoom scale absolument tout le contenu, indépendamment du CSS de l'EPUB
+    // Injection directe dans l'iframe (effet immédiat)
     try {
         const contents = rendition.getContents();
         if (contents && contents.length) {
@@ -509,24 +517,14 @@ function applyFontSize() {
                 styleEl.id = 'reader-font-size';
                 doc.head.appendChild(styleEl);
             }
-            // zoom: scale tout le layout (Chrome/Safari) 
-            // transform: scale fallback (Firefox)
-            styleEl.textContent = `
-                html {
-                    zoom: ${scale} !important;
-                    -webkit-text-size-adjust: none !important;
-                    text-size-adjust: none !important;
-                }
-                @-moz-document url-prefix() {
-                    html { transform: scale(${scale}); transform-origin: top left; }
-                }
-            `;
+            styleEl.textContent = css;
         }
     } catch(e) { console.error('[font] Erreur:', e); }
 
-    // Méthode 2 : aussi via le thème EPUB.js pour persistance entre pages
+    // Via le thème EPUB.js (persistance entre pages)
     rendition.themes.default({
-        'html': { 'zoom': `${scale}`, '-webkit-text-size-adjust': 'none' }
+        'html': { 'font-size': basePx + 'px' },
+        'body *': { 'font-size': 'inherit' }
     });
 }
 
