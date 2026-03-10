@@ -346,10 +346,10 @@ body {
 /* Progress */
 .page-info {
     position: fixed;
-    bottom: 15px;
+    bottom: 6px;
     left: 50%;
     transform: translateX(-50%);
-    font-size: 0.9rem;
+    font-size: 0.85rem;
     font-weight: 500;
     color: #ffffff;
     background: var(--glass-bg);
@@ -357,7 +357,7 @@ body {
     -webkit-backdrop-filter: blur(8px);
     border: 1px solid var(--glass-border);
     box-shadow: 0 4px 10px rgba(0,0,0,0.5);
-    padding: 6px 16px;
+    padding: 4px 14px;
     border-radius: 20px;
     z-index: 60;
     pointer-events: none;
