@@ -341,8 +341,6 @@ function injectHighlightStyleAndClickListener() {
             }
             body { 
                 cursor: text; 
-                padding: 0 16px !important; 
-                box-sizing: border-box !important;
             }
         `;
         doc.head.appendChild(style);
@@ -452,8 +450,8 @@ nextBtn.onclick = () => { stopReading(); if (rendition) rendition.next(); };
 backBtn.onclick = closeReader;
 
 settingsBtn.onclick = () => settingsPanel.classList.toggle('hidden');
-decreaseFontBtn.onclick = () => { if (fontSize > 50) { fontSize -= 10; rendition?.themes.fontSize(`${fontSize}%`); } };
-increaseFontBtn.onclick = () => { if (fontSize < 200) { fontSize += 10; rendition?.themes.fontSize(`${fontSize}%`); } };
+decreaseFontBtn.onclick = () => { if (fontSize > 50) { fontSize -= 25; rendition?.themes.fontSize(`${fontSize}%`); } };
+increaseFontBtn.onclick = () => { if (fontSize < 400) { fontSize += 25; rendition?.themes.fontSize(`${fontSize}%`); } };
 
 rateSelect.oninput = (e) => {
     rateValue.textContent = e.target.value + 'x';
@@ -866,10 +864,18 @@ function highlightRange(charStart, length) {
         sel.removeAllRanges();
         sel.addRange(range);
 
-        // Scroll to the highlighted text
+        // Instead of scrollIntoView() which breaks epub.js column rendering natively,
+        // we check if the sentence is on the next or previous page
         const rect = range.getBoundingClientRect();
-        if (rect && rect.top !== 0) {
-            startNode.parentElement?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        const winWidth = iframeDoc.documentElement.clientWidth;
+
+        // If sentence starts fully off-screen to the right (next page)
+        if (rect.left >= winWidth - 10) {
+            if (rendition) rendition.next();
+        } 
+        // If sentence is off-screen to the left (prev page)
+        else if (rect.right < 10) {
+            if (rendition) rendition.prev();
         }
     } catch(e) {
         console.error('Highlight error:', e);

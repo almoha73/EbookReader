@@ -237,6 +237,7 @@ body {
     border-radius: 12px;
     margin-bottom: 1.5rem;
     box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    padding: 0 20px 30px 20px; /* Safe padding for text to never hit the edges */
 }
 
 /* epub.js renders an iframe inside - make sure it fills properly */
@@ -258,6 +259,7 @@ body {
         box-shadow: none;
         margin-bottom: 0;
         overflow: hidden; /* Ensures horizontal scroll is strictly blocked */
+        padding: 0 16px 30px 16px; /* Permanent bottom margin to prevent crop */
     }
 
     /* Hide ← → nav buttons: user swipes instead */
