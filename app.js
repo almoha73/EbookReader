@@ -54,6 +54,8 @@ let silentSource   = null;
 let silentAudioEl  = null;  // HTML5 audio element
 let silentWatchdog = null;  // interval that restarts speech if OS kills it
 let lastSpeakTime  = 0;     // debounce: avoids watchdog firing between sentences
+let wakeLock       = null;  // Screen Wake Lock to prevent screen from turning off
+let wasPlayingBeforeHidden = false; // track if we need to resume after screen on
 
 
 // ─── Voice loading ────────────────────────────────────────────────────────────
@@ -643,7 +645,8 @@ function startPlaying() {
     isPaused  = false;
     sentenceIdx = 0;
     setPlayIcon('pause');
-    startBackgroundSession();  // keep audio alive when screen off
+    requestWakeLock();  // Keep screen on during reading
+    startBackgroundSession();
     startPageReading();
 }
 
@@ -651,11 +654,13 @@ function pausePlaying() {
     isPaused = true;
     stopSpeaking();
     setPlayIcon('play');
+    releaseWakeLock();
 }
 
 function resumePlaying() {
     isPaused = false;
     setPlayIcon('pause');
+    requestWakeLock();
     readSentence(sentenceIdx);
 }
 
@@ -667,7 +672,54 @@ function stopReading() {
     stopSpeaking();
     setPlayIcon('play');
     stopBackgroundSession();
+    releaseWakeLock();
 }
+
+// ─── Wake Lock (empêche l'écran de s'éteindre automatiquement) ─────────────────
+async function requestWakeLock() {
+    if (!('wakeLock' in navigator)) return;
+    try {
+        wakeLock = await navigator.wakeLock.request('screen');
+        console.log('🔒 Wake Lock acquis — l\'écran restera allumé');
+        wakeLock.addEventListener('release', () => {
+            console.log('🔓 Wake Lock libéré');
+        });
+    } catch(e) {
+        console.warn('Wake Lock impossible:', e);
+    }
+}
+
+function releaseWakeLock() {
+    if (wakeLock) {
+        wakeLock.release().catch(() => {});
+        wakeLock = null;
+    }
+}
+
+// ─── Visibility change : quand l'utilisateur éteint l'écran manuellement ───────
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        // L'écran vient de s'éteindre ou l'app est passée en arrière-plan
+        if (isPlaying && !isPaused) {
+            wasPlayingBeforeHidden = true;
+            // Pause propre : la synthèse TTS sera tuée par l'OS de toute façon
+            synth.cancel();
+            console.log('📱 Écran éteint — lecture TTS mise en pause (position sauvegardée)');
+        }
+    } else {
+        // L'écran vient de se rallumer
+        if (wasPlayingBeforeHidden && isPlaying && !isPaused) {
+            wasPlayingBeforeHidden = false;
+            console.log('📱 Écran rallumé — reprise de la lecture TTS');
+            // Petit délai pour laisser le navigateur se réveiller complètement
+            setTimeout(() => {
+                if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+                if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(() => {});
+                readSentence(sentenceIdx);
+            }, 300);
+        }
+    }
+});
 
 function stopSpeaking() {
     synth.cancel();
