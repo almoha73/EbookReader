@@ -176,7 +176,7 @@ async function openBook(meta) {
         spread: 'none', flow: 'paginated'
     });
 
-    rendition.themes.fontSize(`${fontSize}%`);
+    rendition.themes.default({ 'html': { 'font-size': `${fontSize}% !important` } });
     // CFI is stored in localStorage (synchronous = survives page reload)
     const savedCfi = localStorage.getItem(`cfi_${meta.id}`);
     console.log('Reprise à la position CFI:', savedCfi);
@@ -484,11 +484,15 @@ increaseFontBtn.onclick = () => {
 };
 
 function applyFontSize() {
-    // Apply via EPUB.js theme API
-    rendition?.themes.fontSize(`${fontSize}%`);
-    // Also inject directly into the iframe (more reliable on mobile)
+    if (!rendition) return;
+    // themes.default() est enregistré dans le pipeline EPUB.js et
+    // réappliqué automatiquement à chaque rendu de page (y compris sur mobile).
+    rendition.themes.default({
+        'html': { 'font-size': `${fontSize}% !important` }
+    });
+    // Injection CSS directe dans l'iframe courante (appliquée immédiatement)
     try {
-        const contents = rendition?.getContents();
+        const contents = rendition.getContents();
         if (contents && contents.length) {
             const doc = contents[0].document;
             let styleEl = doc.getElementById('reader-font-size');
