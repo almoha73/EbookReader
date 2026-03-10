@@ -221,13 +221,12 @@ function injectHighlightStyleAndClickListener() {
         `;
         doc.head.appendChild(style);
 
-        // Click-to-read: start reading from the clicked sentence
+        // Click-to-read: clicking on any sentence starts / redirects reading
         doc.body.addEventListener('click', (e) => {
             settingsPanel.classList.add('hidden');
-            if (!isPlaying && !isPaused) return; // only redirect if already playing
 
             // Find the character offset of the click position
-            let clickedCharIndex = 0;
+            let clickedCharIndex = -1;
             try {
                 let range;
                 if (doc.caretRangeFromPoint) {
@@ -237,31 +236,53 @@ function injectHighlightStyleAndClickListener() {
                     range = doc.createRange();
                     range.setStart(pos.offsetNode, pos.offset);
                 }
-                if (range && textNodes.length) {
+                if (range) {
                     const clickedNode = range.startContainer;
                     const clickedOffset = range.startOffset;
-                    for (const tn of textNodes) {
-                        if (tn.node === clickedNode) {
-                            clickedCharIndex = tn.start + clickedOffset;
-                            break;
+
+                    // If we already have textNodes built (reading was started), use them
+                    if (textNodes.length) {
+                        for (const tn of textNodes) {
+                            if (tn.node === clickedNode) {
+                                clickedCharIndex = tn.start + clickedOffset;
+                                break;
+                            }
                         }
                     }
-                    // Find which sentence contains this character
-                    let targetIdx = 0;
-                    for (let i = 0; i < sentences.length; i++) {
-                        if (sentences[i].charStart <= clickedCharIndex) {
-                            targetIdx = i;
-                        } else {
-                            break;
-                        }
-                    }
-                    // Jump to that sentence
+                }
+            } catch(err) {
+                console.error('Click-to-read: erreur de position:', err);
+            }
+
+            if (!isPlaying) {
+                // Reading was stopped — start fresh, then after the page is parsed
+                // jump to the clicked sentence
+                isPlaying = true;
+                isPaused  = false;
+                sentenceIdx = 0;
+                setPlayIcon('pause');
+                startBackgroundSession();
+
+                // We start the page, then seek once sentences are built
+                startPageReadingThenSeek(clickedCharIndex);
+            } else if (isPaused) {
+                // Was paused — resume at clicked position
+                isPaused = false;
+                setPlayIcon('pause');
+                if (clickedCharIndex >= 0 && sentences.length) {
+                    let targetIdx = findSentenceIdx(clickedCharIndex);
+                    synth.cancel();
+                    sentenceIdx = targetIdx;
+                }
+                readSentence(sentenceIdx);
+            } else {
+                // Already playing — jump to clicked sentence
+                if (clickedCharIndex >= 0 && sentences.length) {
+                    let targetIdx = findSentenceIdx(clickedCharIndex);
                     synth.cancel();
                     sentenceIdx = targetIdx;
                     setTimeout(() => readSentence(sentenceIdx), 80);
                 }
-            } catch(err) {
-                console.error('Click-to-read error:', err);
             }
         });
     } catch(e) {}
@@ -507,6 +528,59 @@ const _origResume = resumePlaying;
 
 
 // ─── Page text extraction ────────────────────────────────────────────────────
+
+// Find which sentence index contains the given character offset
+function findSentenceIdx(charIndex) {
+    if (charIndex < 0 || !sentences.length) return 0;
+    let targetIdx = 0;
+    for (let i = 0; i < sentences.length; i++) {
+        if (sentences[i].charStart <= charIndex) targetIdx = i;
+        else break;
+    }
+    return targetIdx;
+}
+
+// Same as startPageReading but seeks to a specific char offset after parsing
+async function startPageReadingThenSeek(seekCharIndex) {
+    if (!isPlaying || isPaused || !rendition) return;
+    stopSpeaking();
+    sentenceIdx  = 0;
+    sentences    = [];
+    textNodes    = [];
+    pageFullText = '';
+    iframeDoc    = null;
+
+    const loc = rendition.currentLocation();
+    if (!loc) return;
+
+    try {
+        const contentsArr = rendition.getContents();
+        if (!contentsArr || !contentsArr.length) return;
+        iframeDoc = contentsArr[0].document;
+    } catch(e) { return; }
+
+    try {
+        const walk = iframeDoc.createTreeWalker(iframeDoc.body, NodeFilter.SHOW_TEXT, null, false);
+        let node;
+        while ((node = walk.nextNode())) {
+            const text = node.textContent;
+            if (text.trim()) {
+                textNodes.push({ node, start: pageFullText.length, end: pageFullText.length + text.length });
+                pageFullText += text;
+            }
+        }
+    } catch(e) { return; }
+
+    if (!pageFullText.trim()) { if (isPlaying && !isPaused) rendition.next(); return; }
+
+    sentences = splitSentences(pageFullText);
+    if (!sentences.length) { if (isPlaying && !isPaused) rendition.next(); return; }
+
+    // Seek to clicked sentence if we have a valid position
+    const startIdx = seekCharIndex >= 0 ? findSentenceIdx(seekCharIndex) : 0;
+    readSentence(startIdx);
+}
+
 async function startPageReading() {
     if (!isPlaying || isPaused || !rendition) return;
     stopSpeaking();
