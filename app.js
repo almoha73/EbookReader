@@ -18,6 +18,8 @@ const rateSelect    = document.getElementById('rate-select');
 const rateValue     = document.getElementById('rate-value');
 const decreaseFontBtn = document.getElementById('decrease-font');
 const increaseFontBtn = document.getElementById('increase-font');
+const themeLightBtn   = document.getElementById('theme-light');
+const themeDarkBtn    = document.getElementById('theme-dark');
 
 // ─── State ───────────────────────────────────────────────────────────────────
 let currentBook   = null;
@@ -27,6 +29,8 @@ let currentBookId = null;
 let fontSize = parseInt(localStorage.getItem('reader_fontSize') || '100', 10);
 const fontSizeDisplayEl = document.getElementById('font-size-display');
 if (fontSizeDisplayEl) fontSizeDisplayEl.textContent = fontSize + '%';
+
+let currentTheme = localStorage.getItem('reader_theme') || 'light';
 
 // TTS state
 const synth = window.speechSynthesis;
@@ -180,7 +184,7 @@ async function openBook(meta) {
         spread: 'none', flow: 'paginated'
     });
 
-    rendition.themes.default({ 'html': { 'font-size': `${fontSize}% !important` } });
+    applyAppearance();
     // CFI is stored in localStorage (synchronous = survives page reload)
     const savedCfi = localStorage.getItem(`cfi_${meta.id}`);
     console.log('Reprise à la position CFI:', savedCfi);
@@ -363,20 +367,8 @@ function injectHighlightStyleAndClickListener() {
         `;
         doc.head.appendChild(style);
 
-        // Also apply font size directly (needed on mobile where themes.fontSize may be ignored)
-        let fontSizeEl = doc.getElementById('reader-font-size');
-        if (!fontSizeEl) {
-            fontSizeEl = doc.createElement('style');
-            fontSizeEl.id = 'reader-font-size';
-            doc.head.appendChild(fontSizeEl);
-        }
-        // font-size en px + héritage forcé : évite zoom (qui casse le layout EPUB) et
-        // les conflits avec les font-size en px/pt définis par l'EPUB lui-même.
-        const basePx = Math.round(16 * fontSize / 100);
-        fontSizeEl.textContent = `
-            html { font-size: ${basePx}px !important; }
-            body * { font-size: inherit !important; }
-        `;
+        // Apply font size and theme colors directly into the new iframe (fallback for mobile)
+        applyAppearance();
 
         // Touch swipe in the iframe to turn pages (mobile)
         addIframeSwipeListeners(doc);
@@ -501,18 +493,32 @@ decreaseFontBtn.addEventListener('click', () => {
     if (fontSize > 50) {
         fontSize -= 25;
         localStorage.setItem('reader_fontSize', fontSize);
-        applyFontSize();
+        applyAppearance();
     }
 });
 increaseFontBtn.addEventListener('click', () => {
     if (fontSize < 400) {
         fontSize += 25;
         localStorage.setItem('reader_fontSize', fontSize);
-        applyFontSize();
+        applyAppearance();
     }
 });
+if (themeLightBtn) {
+    themeLightBtn.addEventListener('click', () => {
+        currentTheme = 'light';
+        localStorage.setItem('reader_theme', currentTheme);
+        applyAppearance();
+    });
+}
+if (themeDarkBtn) {
+    themeDarkBtn.addEventListener('click', () => {
+        currentTheme = 'dark';
+        localStorage.setItem('reader_theme', currentTheme);
+        applyAppearance();
+    });
+}
 
-function applyFontSize() {
+function applyAppearance() {
     const display = document.getElementById('font-size-display');
     if (display) display.textContent = fontSize + '%';
 
@@ -520,31 +526,73 @@ function applyFontSize() {
     const settingsPanelEl = document.getElementById('settings-panel');
     if (settingsPanelEl) settingsPanelEl.style.fontSize = (fontSize / 100) + 'rem';
 
+    if (themeLightBtn && themeDarkBtn) {
+        if (currentTheme === 'light') {
+            themeLightBtn.style.background = 'var(--primary-color)';
+            themeLightBtn.style.color = '#fff';
+            themeDarkBtn.style.background = 'rgba(255,255,255,0.1)';
+            themeDarkBtn.style.color = '#fff';
+        } else {
+            themeDarkBtn.style.background = 'var(--primary-color)';
+            themeDarkBtn.style.color = '#fff';
+            themeLightBtn.style.background = 'rgba(255,255,255,0.1)';
+            themeLightBtn.style.color = '#fff';
+        }
+    }
+
     if (!rendition) return;
 
-    // font-size en px absolus pour l'iframe courante
+    // font-size en px absolus pour l'iframe courante + modifs CSS du theme
     const basePx = Math.round(16 * fontSize / 100);
-    const css = `html { font-size: ${basePx}px !important; } body * { font-size: inherit !important; }`;
+    const bgColor = currentTheme === 'dark' ? '#0d1117' : '#ffffff';
+    const textColor = currentTheme === 'dark' ? '#e6edf3' : '#000000';
+    
+    // Le parent .viewer-container doit aussi switcher
+    if (viewer) {
+        if (currentTheme === 'dark') viewer.classList.add('dark-mode');
+        else viewer.classList.remove('dark-mode');
+    }
+
+    const css = `
+        html { 
+            font-size: ${basePx}px !important;
+            background: ${bgColor} !important;
+            color: ${textColor} !important;
+        } 
+        body * { 
+            font-size: inherit !important;
+            background-color: transparent !important;
+            color: ${textColor} !important;
+        }
+    `;
 
     // Injection directe dans l'iframe (effet immédiat)
     try {
         const contents = rendition.getContents();
         if (contents && contents.length) {
             const doc = contents[0].document;
-            let styleEl = doc.getElementById('reader-font-size');
+            let styleEl = doc.getElementById('reader-appearance');
             if (!styleEl) {
                 styleEl = doc.createElement('style');
-                styleEl.id = 'reader-font-size';
+                styleEl.id = 'reader-appearance';
                 doc.head.appendChild(styleEl);
             }
             styleEl.textContent = css;
         }
-    } catch(e) { console.error('[font] Erreur:', e); }
+    } catch(e) { console.error('[app] Erreur injection CSS:', e); }
 
     // Via le thème EPUB.js (persistance entre pages)
     rendition.themes.default({
-        'html': { 'font-size': basePx + 'px' },
-        'body *': { 'font-size': 'inherit' }
+        'html': { 
+            'font-size': basePx + 'px',
+            'background': `${bgColor} !important`,
+            'color': `${textColor} !important`
+        },
+        'body *': { 
+            'font-size': 'inherit',
+            'background-color': 'transparent !important',
+            'color': `${textColor} !important`
+        }
     });
 }
 

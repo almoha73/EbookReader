@@ -235,12 +235,19 @@ body {
     margin: 0.5rem auto;
     position: relative;
     overflow: hidden; /* CRITICAL: prevents epubjs columns from spilling/shifting visually */
-    background: #fff;
-    color: #000;
+    background: #ffffff;
+    color: #000000;
     border-radius: 12px;
     margin-bottom: 1.5rem;
     box-shadow: 0 10px 30px rgba(0,0,0,0.5);
     padding: 0 20px 30px 20px; /* Safe padding for text to never hit the edges */
+    transition: background-color 0.3s ease, color 0.3s ease;
+}
+
+.viewer-container.dark-mode {
+    background: #0d1117;
+    color: #e6edf3;
+    border: 1px solid var(--glass-border);
 }
 
 /* epub.js renders an iframe inside - make sure it fills properly */
