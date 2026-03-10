@@ -719,10 +719,17 @@ function setPlayIcon(icon) {
 function startBackgroundSession() {
     // 1. HTML5 Audio tag approach (Strongest MediaSession binder for Android/iOS)
     if (!silentAudioEl) {
-        // A strictly silent short MP3 encoded in base64
-        silentAudioEl = new Audio('data:audio/mp3;base64,//qxkAAAAAAAAAAAAAABz/AAAAAAAAAAAAAAAD/////wAA//8AAAAAAAAAAAAAAAAAAAAAAAAAAAACAAAADAAAAAA=');
+        // Fichier MP3 silencieux très long (1 heure) placé dans le DOM.
+        // Android le traite comme un vrai flux média long type podcast ou radio,
+        // ce qui maintient le processus JS actif même écran éteint.
+        silentAudioEl = document.getElementById('silent-audio');
+        if (!silentAudioEl) {
+            silentAudioEl = new Audio('silent_1h.mp3');
+        } else if (!silentAudioEl.src) {
+            silentAudioEl.src = 'silent_1h.mp3';
+        }
         silentAudioEl.loop = true;
-        silentAudioEl.volume = 0.01;
+        silentAudioEl.volume = 0.001; // Quasi-inaudible mais réel
     }
     silentAudioEl.play().catch(e => console.warn('Erreur lecture silentAudioEl:', e));
 
