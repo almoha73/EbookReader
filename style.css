@@ -226,7 +226,7 @@ body {
 
 .viewer-container {
     flex: 1;
-    /* Leave space for nav buttons on each side */
+    /* Leave space for nav buttons on each side on desktop */
     width: calc(100% - 120px);
     max-width: 860px;
     margin: 0.5rem auto;
@@ -243,6 +243,52 @@ body {
 .viewer-container iframe {
     display: block;
     border: none;
+}
+
+/* ─────────────────────────────────────────
+   RESPONSIVE — Mobile
+──────────────────────────────────────── */
+@media (max-width: 768px) {
+    /* Full-width viewer — swipe replaces nav buttons */
+    .viewer-container {
+        width: 100%;
+        max-width: 100%;
+        margin: 0;
+        border-radius: 0;
+        box-shadow: none;
+        margin-bottom: 0;
+    }
+
+    /* Hide ← → nav buttons: user swipes instead */
+    .nav-btn {
+        display: none;
+    }
+
+    /* Compact header on mobile */
+    .glass-header {
+        padding: 0.7rem 1rem;
+    }
+    .glass-header h2 {
+        font-size: 1rem;
+        max-width: 160px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* Smaller library grid */
+    .library-grid {
+        grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+        gap: 1rem;
+        padding: 1rem;
+    }
+
+    /* Settings panel takes most of screen */
+    .settings-panel {
+        width: calc(100% - 2rem);
+        right: 1rem;
+        left: 1rem;
+    }
 }
 
 /* Nav Buttons overlaying reader */

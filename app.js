@@ -198,6 +198,57 @@ async function openBook(meta) {
     });
 
     rendition.on('click', () => settingsPanel.classList.add('hidden'));
+
+    // Swipe left/right to turn pages (mobile)
+    addSwipeListeners(viewer);
+}
+
+// ─── Swipe gesture support ────────────────────────────────────────────────────
+let swipeTouchStartX = 0;
+let swipeTouchStartY = 0;
+
+function addSwipeListeners(el) {
+    el.addEventListener('touchstart', (e) => {
+        swipeTouchStartX = e.changedTouches[0].screenX;
+        swipeTouchStartY = e.changedTouches[0].screenY;
+    }, { passive: true });
+
+    el.addEventListener('touchend', (e) => {
+        const dx = e.changedTouches[0].screenX - swipeTouchStartX;
+        const dy = e.changedTouches[0].screenY - swipeTouchStartY;
+
+        // Only count as horizontal swipe if dx > dy (not a scroll)
+        if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy)) return;
+
+        if (dx < 0) {
+            // Swipe left → next page
+            stopReading(); if (rendition) rendition.next();
+        } else {
+            // Swipe right → previous page
+            stopReading(); if (rendition) rendition.prev();
+        }
+    }, { passive: true });
+}
+
+// Also attach swipe listeners inside the EPUB iframe after each page renders
+function addIframeSwipeListeners(doc) {
+    if (!doc) return;
+    doc.addEventListener('touchstart', (e) => {
+        swipeTouchStartX = e.changedTouches[0].screenX;
+        swipeTouchStartY = e.changedTouches[0].screenY;
+    }, { passive: true });
+
+    doc.addEventListener('touchend', (e) => {
+        const dx = e.changedTouches[0].screenX - swipeTouchStartX;
+        const dy = e.changedTouches[0].screenY - swipeTouchStartY;
+        if (Math.abs(dx) < 50 || Math.abs(dx) < Math.abs(dy)) return;
+
+        if (dx < 0) {
+            stopReading(); if (rendition) rendition.next();
+        } else {
+            stopReading(); if (rendition) rendition.prev();
+        }
+    }, { passive: true });
 }
 
 function injectHighlightStyleAndClickListener() {
@@ -220,6 +271,9 @@ function injectHighlightStyleAndClickListener() {
             body { cursor: text; }
         `;
         doc.head.appendChild(style);
+
+        // Touch swipe in the iframe to turn pages (mobile)
+        addIframeSwipeListeners(doc);
 
         // Click-to-read: clicking on any sentence starts / redirects reading
         doc.body.addEventListener('click', (e) => {
