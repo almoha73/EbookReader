@@ -24,6 +24,8 @@ let rendition     = null;
 let currentCfi    = null;
 let currentBookId = null;
 let fontSize = parseInt(localStorage.getItem('reader_fontSize') || '100', 10);
+const fontSizeDisplayEl = document.getElementById('font-size-display');
+if (fontSizeDisplayEl) fontSizeDisplayEl.textContent = fontSize + '%';
 
 // TTS state
 const synth = window.speechSynthesis;
@@ -484,17 +486,24 @@ increaseFontBtn.onclick = () => {
 };
 
 function applyFontSize() {
-    if (!rendition) return;
-    // themes.default() est enregistré dans le pipeline EPUB.js et
-    // réappliqué automatiquement à chaque rendu de page (y compris sur mobile).
+    const display = document.getElementById('font-size-display');
+    if (display) display.textContent = fontSize + '%';
+    console.log('[font] Application taille:', fontSize + '%');
+
+    if (!rendition) { console.warn('[font] Pas de rendition'); return; }
+
+    // 1. Enregistrement du thème via EPUB.js (persistant entre les pages)
     rendition.themes.default({
         'html': { 'font-size': `${fontSize}% !important` }
     });
-    // Injection CSS directe dans l'iframe courante (appliquée immédiatement)
+
+    // 2. Injection CSS directe dans l'iframe courante (appliquée immédiatement)
     try {
         const contents = rendition.getContents();
+        console.log('[font] Contents:', contents ? contents.length : 'null');
         if (contents && contents.length) {
             const doc = contents[0].document;
+            console.log('[font] Doc accessible:', !!doc, '| head:', !!doc?.head);
             let styleEl = doc.getElementById('reader-font-size');
             if (!styleEl) {
                 styleEl = doc.createElement('style');
@@ -502,8 +511,9 @@ function applyFontSize() {
                 doc.head.appendChild(styleEl);
             }
             styleEl.textContent = `html { font-size: ${fontSize}% !important; }`;
+            console.log('[font] Style injecté:', styleEl.textContent);
         }
-    } catch(e) {}
+    } catch(e) { console.error('[font] Erreur injection:', e); }
 }
 
 rateSelect.oninput = (e) => {
