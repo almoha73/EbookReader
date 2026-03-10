@@ -206,6 +206,7 @@ async function openBook(meta) {
 // ─── Swipe gesture support ────────────────────────────────────────────────────
 let swipeTouchStartX = 0;
 let swipeTouchStartY = 0;
+let lastTapTime = 0;  // prevents double-trigger: touchend tap + synthetic click
 
 function addSwipeListeners(el) {
     el.addEventListener('touchstart', (e) => {
@@ -292,6 +293,9 @@ function handleTapToRead(doc, clientX, clientY) {
         console.error('handleTapToRead error:', err);
     }
 
+    // Mark this tap as handled — the synthetic click (~300ms later) will be ignored
+    lastTapTime = Date.now();
+
     if (!isPlaying) {
         // Start reading from the tapped sentence
         isPlaying   = true;
@@ -345,6 +349,9 @@ function injectHighlightStyleAndClickListener() {
         // Click-to-read: clicking on any sentence starts / redirects reading
         doc.body.addEventListener('click', (e) => {
             settingsPanel.classList.add('hidden');
+            // On mobile a tap fires touchend (handled) THEN a synthetic click ~300ms later.
+            // Ignore that synthetic click to avoid reading the same sentence twice.
+            if (Date.now() - lastTapTime < 500) return;
 
             // Find the character offset of the click position
             let clickedCharIndex = -1;
