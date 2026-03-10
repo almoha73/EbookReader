@@ -10,8 +10,9 @@ const nextBtn       = document.getElementById('next-page');
 const backBtn       = document.getElementById('back-to-library');
 const playPauseBtn  = document.getElementById('play-pause-btn');
 const settingsBtn   = document.getElementById('settings-btn');
-const settingsPanel = document.getElementById('settings-panel');
-const progressFill  = document.getElementById('progress-fill');
+const settingsPanel  = document.getElementById('settings-panel');
+const progressFill   = document.getElementById('progress-fill');
+const pageInfo       = document.getElementById('page-info');
 const voiceSelect   = document.getElementById('voice-select');
 const rateSelect    = document.getElementById('rate-select');
 const rateValue     = document.getElementById('rate-value');
@@ -449,6 +450,14 @@ function updateProgress() {
     if (currentBook?.locations?.length() > 0 && currentCfi) {
         const pct = Math.round(currentBook.locations.percentageFromCfi(currentCfi) * 100);
         progressFill.style.width = pct + '%';
+        
+        // Update page info
+        const currentPage = currentBook.locations.locationFromCfi(currentCfi);
+        const totalPages = currentBook.locations.total || 0;
+        if (pageInfo && totalPages > 0 && currentPage >= 0) {
+            pageInfo.textContent = `Page ${currentPage} sur ${totalPages}`;
+        }
+
         // Save progress % to localforage (async is fine for this non-critical data)
         localforage.getItem(`${currentBookId}_meta`).then(meta => {
             if (meta) { meta.progress = pct; localforage.setItem(`${currentBookId}_meta`, meta); }
