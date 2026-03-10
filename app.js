@@ -186,9 +186,14 @@ async function openBook(meta) {
     console.log('Reprise à la position CFI:', savedCfi);
     rendition.display(savedCfi || undefined);
 
+    if (pageInfo) pageInfo.textContent = "Calcul des pages...";
+
     currentBook.ready
         .then(() => currentBook.locations.generate(1600))
-        .then(() => updateProgress());
+        .then(() => {
+            console.log('[pagination] Calcul terminé');
+            updateProgress();
+        });
 
     rendition.on('relocated', (loc) => {
         currentCfi = loc.start.cfi;
@@ -447,6 +452,9 @@ function injectHighlightStyleAndClickListener() {
 }
 
 function updateProgress() {
+    if (!currentCfi && rendition && rendition.currentLocation()) {
+        currentCfi = rendition.currentLocation()?.start?.cfi;
+    }
     if (currentBook?.locations?.length() > 0 && currentCfi) {
         const pct = Math.round(currentBook.locations.percentageFromCfi(currentCfi) * 100);
         progressFill.style.width = pct + '%';
@@ -462,6 +470,9 @@ function updateProgress() {
         localforage.getItem(`${currentBookId}_meta`).then(meta => {
             if (meta) { meta.progress = pct; localforage.setItem(`${currentBookId}_meta`, meta); }
         });
+    } else if (pageInfo && (!currentBook || currentBook.locations.length() === 0)) {
+        // En attente du calcul
+        pageInfo.textContent = "Calcul des pages...";
     }
 }
 
