@@ -1100,7 +1100,8 @@ function readSentence(idx) {
     const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(textChunk)}&tl=${langCode}&client=tw-ob`;
 
     if (!ttsAudioEl) ttsAudioEl = document.getElementById('tts-audio');
-    if (silentAudioEl && !silentAudioEl.paused) silentAudioEl.pause();
+    // On garde silentAudioEl en lecture continue pour maintenir la session OS active
+    // même pendant la milliseconde de "blanc" entre deux phrases de Google TTS !
 
     ttsAudioEl.onended = null;
     ttsAudioEl.onerror = null;
