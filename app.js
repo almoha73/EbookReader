@@ -51,6 +51,7 @@ let activeMarkEls    = [];  // <mark> elements currently in DOM
 // ─── Background audio state (keep alive when screen is off) ─────────────────────
 let audioCtx       = null;
 let silentSource   = null;
+let activeVoiceNode = null;
 let silentAudioEl  = null;  // HTML5 audio element
 let silentWatchdog = null;  // interval that restarts speech if OS kills it
 let lastSpeakTime  = 0;     // debounce: avoids watchdog firing between sentences
@@ -700,6 +701,10 @@ function releaseWakeLock() {
 
 function stopSpeaking() {
     synth.cancel();
+    if (activeVoiceNode) {
+        try { activeVoiceNode.stop(); } catch(e) {}
+        activeVoiceNode = null;
+    }
     clearHighlight();
 }
 
@@ -1078,30 +1083,68 @@ function readSentence(idx) {
         populateVoiceList();
     }
 
-    const utt = new SpeechSynthesisUtterance(s.text);
     const vIdx = parseInt(voiceSelect.value, 10);
-    if (voices[vIdx]) utt.voice = voices[vIdx];
-    utt.rate = parseFloat(rateSelect.value);
-    utt.lang = voices[vIdx]?.lang || 'fr-FR';
+    const lang = voices[vIdx] ? voices[vIdx].lang : 'fr-FR';
+    const rate = parseFloat(rateSelect.value);
 
-    const startTime = Date.now();
+    // Fonction de lecture par Web Audio API (survit à l'extinction de l'écran grâce à silent_1h.mp3 + cors proxy)
+    const playGoogleTTS = async () => {
+        // Bloquer la nouvelle phrase si on a fait "Pause" pendant le chargement
+        if (!isPlaying || isPaused) return;
 
-    utt.onend = () => {
-        if (isPlaying && !isPaused) readSentence(idx + 1);
-    };
-    utt.onerror = (e) => {
-        if (e.error === 'canceled' || e.error === 'interrupted') return;
-        console.error('TTS error:', e.error);
-        // En arrière-plan, le TTS peut échouer instantanément : on ne fait rien,
-        // le watchdog de l'événement visibilitychange prendra en charge la relance.
-        if (document.hidden) {
-            console.warn("⚠ TTS erreur en arrière-plan — attente du rallumage de l'écran");
-            return;
+        const langCode = lang.split('-')[0];
+        const textChunk = s.text.trim().substring(0, 200);
+        const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(textChunk)}&tl=${langCode}&client=tw-ob`;
+        const proxyUrl = `https://cors.eu.org/${ttsUrl}`;
+        
+        try {
+            const res = await fetch(proxyUrl);
+            if (!res.ok) throw new Error('Proxy HTTP error');
+            const arrayBuf = await res.arrayBuffer();
+            
+            if (isPaused || !isPlaying) return; // User paused during network request
+            
+            // Web Audio API context ensures it bypasses the "no <audio>.src changes in bg" rule of Android Chrome
+            if (!audioCtx || audioCtx.state === 'closed') {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                await audioCtx.resume().catch(()=>{});
+            }
+            
+            const audioData = await audioCtx.decodeAudioData(arrayBuf);
+            if (isPaused || !isPlaying) return; // Paused during decoding
+            
+            activeVoiceNode = audioCtx.createBufferSource();
+            activeVoiceNode.buffer = audioData;
+            activeVoiceNode.playbackRate.value = Math.min(Math.max(rate, 0.5), 4.0);
+            activeVoiceNode.connect(audioCtx.destination);
+            
+            activeVoiceNode.onended = () => {
+                activeVoiceNode = null;
+                if (isPlaying && !isPaused) readSentence(idx + 1);
+            };
+            
+            activeVoiceNode.start(0);
+        } catch(e) {
+            console.warn('[TTS] Echec WebAudio/GoogleTTS, fallback SpeechSynthesis:', e);
+            // Fallback: SpeechSynthesis (marche écran allumé, coupe si écran éteint)
+            if (!voicesReady) populateVoiceList();
+            const utt = new SpeechSynthesisUtterance(s.text);
+            if (voices[vIdx]) utt.voice = voices[vIdx];
+            utt.rate = rate;
+            utt.lang = lang;
+            utt.onend = () => { if (isPlaying && !isPaused) readSentence(idx + 1); };
+            utt.onerror = (err) => {
+                if (err.error === 'canceled' || err.error === 'interrupted') return;
+                if (document.hidden) return; // Ne pas spammer l'UI en erreur pendant le background
+                if (isPlaying && !isPaused) readSentence(idx + 1);
+            };
+            synth.speak(utt);
         }
-        if (isPlaying && !isPaused) readSentence(idx + 1);
     };
-
-    synth.speak(utt);
+    
+    playGoogleTTS();
 }
 
 // ─── Highlighting via Selection API (non-destructive, no DOM mutation) ────────
