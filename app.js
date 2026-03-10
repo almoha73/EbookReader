@@ -696,30 +696,7 @@ function releaseWakeLock() {
     }
 }
 
-// ─── Visibility change : quand l'utilisateur éteint l'écran manuellement ───────
-document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-        // L'écran vient de s'éteindre ou l'app est passée en arrière-plan
-        if (isPlaying && !isPaused) {
-            wasPlayingBeforeHidden = true;
-            // Pause propre : la synthèse TTS sera tuée par l'OS de toute façon
-            synth.cancel();
-            console.log('📱 Écran éteint — lecture TTS mise en pause (position sauvegardée)');
-        }
-    } else {
-        // L'écran vient de se rallumer
-        if (wasPlayingBeforeHidden && isPlaying && !isPaused) {
-            wasPlayingBeforeHidden = false;
-            console.log('📱 Écran rallumé — reprise de la lecture TTS');
-            // Petit délai pour laisser le navigateur se réveiller complètement
-            setTimeout(() => {
-                if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
-                if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(() => {});
-                readSentence(sentenceIdx);
-            }, 300);
-        }
-    }
-});
+// (visibilitychange is handled below, after setupMediaSession)
 
 function stopSpeaking() {
     synth.cancel();
@@ -836,16 +813,29 @@ function setupMediaSession() {
     console.log('MediaSession configurée - Contrôles sur écran de verrouillage actifs');
 }
 
-// If the browser pauses speech when the page goes to background,
-// resume it as soon as the page becomes visible again.
+// Watchdog de reprise au rallumage de l'écran.
+// NE PAS couper le TTS à l'extinction : laisser l'OS décider (il peut le garder vivant
+// grâce au silentAudioEl + AudioContext). Relancer seulement si le navigateur l'a mis en pause.
 document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && isPlaying && !isPaused) {
-        // Some browsers pause synth on hide; force-resume
-        if (synth.paused) {
-            synth.resume();
-        } else if (!synth.speaking) {
-            // Fell through the cracks: restart current sentence
-            setTimeout(() => readSentence(sentenceIdx), 200);
+    if (document.hidden) {
+        // Écran éteint : ON NE COUPE PAS. On laisse AudioContext + silentAudioEl maintenir la session.
+        console.log('📱 Passage en arrière-plan — lecture TTS laissée intacte');
+    } else {
+        // Écran rallumé : récupérer l'AudioContext et relancer le TTS s'il a été tué
+        if (isPlaying && !isPaused) {
+            console.log('📱 Retour au premier plan — vérification du TTS');
+            setTimeout(() => {
+                // Relancer l'audio silencieux si l'OS l'a mis en veille
+                if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+                if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(() => {});
+                // Relancer le TTS uniquement s'il s'est vraiment arrêté
+                if (!synth.speaking && !synth.pending) {
+                    console.log('📱 TTS arrêté par l\'OS — relance depuis phrase', sentenceIdx);
+                    readSentence(sentenceIdx);
+                } else if (synth.paused) {
+                    synth.resume();
+                }
+            }, 300);
         }
     }
     if ('mediaSession' in navigator && isPlaying) {
@@ -1090,22 +1080,15 @@ function readSentence(idx) {
     const startTime = Date.now();
 
     utt.onend = () => {
-        const elapsed = Date.now() - startTime;
-        if (elapsed < 50) {
-            console.warn("⚠ TTS onend instantané (OS bloqué en arrière-plan). Mise en pause de sécurité.");
-            pausePlaying();
-            return;
-        }
         if (isPlaying && !isPaused) readSentence(idx + 1);
     };
     utt.onerror = (e) => {
         if (e.error === 'canceled' || e.error === 'interrupted') return;
         console.error('TTS error:', e.error);
-        const elapsed = Date.now() - startTime;
-        // On lock sur erreur forte instantanée en background pour éviter qu'il lise/passe tout le livre en 1 s !
-        if (elapsed < 50 || document.hidden) {
-            console.warn("⚠ TTS erreur système contournée en arrière-plan. Mise en pause.");
-            pausePlaying();
+        // En arrière-plan, le TTS peut échouer instantanément : on ne fait rien,
+        // le watchdog de l'événement visibilitychange prendra en charge la relance.
+        if (document.hidden) {
+            console.warn("⚠ TTS erreur en arrière-plan — attente du rallumage de l'écran");
             return;
         }
         if (isPlaying && !isPaused) readSentence(idx + 1);
