@@ -491,6 +491,12 @@ function applyFontSize() {
     if (display) display.textContent = fontSize + '%';
     console.log('[font] Application taille:', fontSize + '%');
 
+    // Test visible dans le DOM PARENT (pas l'iframe) pour confirmer que l'événement fonctionne
+    // Si le texte du panneau de paramètres grossit → JS OK, problème dans l'iframe
+    // Si rien ne grossit → le clic n'arrive pas
+    const settingsPanelEl = document.getElementById('settings-panel');
+    if (settingsPanelEl) settingsPanelEl.style.fontSize = (fontSize / 100) + 'rem';
+
     if (!rendition) { console.warn('[font] Pas de rendition'); return; }
 
     // 1. Enregistrement du thème via EPUB.js (persistant entre les pages)
