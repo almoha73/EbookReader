@@ -288,6 +288,7 @@ function handleTapToRead(doc, clientX, clientY) {
     // Si le panneau de paramètres est ouvert, le clic sert uniquement à le fermer (pas de lecture)
     if (!settingsPanel.classList.contains('hidden')) {
         settingsPanel.classList.add('hidden');
+        lastTapTime = Date.now(); // Évite le faux clic synthétique 300ms plus tard
         return;
     }
 
