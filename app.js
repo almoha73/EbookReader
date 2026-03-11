@@ -682,10 +682,7 @@ function releaseWakeLock() {
 // (visibilitychange is handled below, after setupMediaSession)
 
 function stopSpeaking() {
-    if (activeVoiceNode) {
-        try { activeVoiceNode.onended = null; activeVoiceNode.stop(); } catch(e) {}
-        activeVoiceNode = null;
-    }
+    stopTTSAudio();
     clearHighlight();
 }
 
@@ -741,11 +738,9 @@ function startBackgroundSession() {
     silentWatchdog = setInterval(() => {
         if (!isPlaying || isPaused || pendingAutoRead) return;
         if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(() => {});
-        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
-        // Mort = plus rien ne joue depuis 5s (ni SpeechSynth actif/en pause, ni WebAudio)
-        const audioIsDead = !activeVoiceNode;
-        if (audioIsDead && Date.now() - lastSpeakTime > 5000) {
-            console.warn('⚠ Watchdog: audio complètement mort. Relance depuis phrase', sentenceIdx);
+        // Relancer si plus aucun audio TTS ne joue depuis 5s
+        if (!currentTTSAudio && Date.now() - lastSpeakTime > 5000) {
+            console.warn('⚠ Watchdog: audio mort. Relance phrase', sentenceIdx);
             readSentence(sentenceIdx);
         }
     }, 2000);
@@ -810,10 +805,8 @@ document.addEventListener('visibilitychange', () => {
     } else {
         if (isPlaying && !isPaused) {
             setTimeout(() => {
-                if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
                 if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(() => {});
-                // Relancer si plus aucun noeud WebAudio ne joue
-                if (!activeVoiceNode) {
+                if (!currentTTSAudio) {
                     console.log('📱 Audio mort au rallumage — relance phrase', sentenceIdx);
                     readSentence(sentenceIdx);
                 }
@@ -1052,137 +1045,106 @@ function readSentence(idx) {
     const lang = 'fr-FR'; // Google TTS langue fixée au français
     const rate = parseFloat(rateSelect.value);
 
-    // Google TTS uniquement via WebAudio — bypass complet d'Acapela et du système Android
-    prefetchSentencesAhead(idx, lang);
-    const cachedBuf = prefetchCache.get(idx);
-    if (cachedBuf) {
-        playCachedBuffer(cachedBuf, idx, rate);
-    } else {
-        fetchAndPlaySentence(idx, s, lang, rate);
-    }
+    // ─── Google TTS via <audio> HTML5 — SANS proxy, SANS CORS ──────────────────
+    // new Audio(url) ne subit pas de restriction CORS, contrairement à fetch().
+    // C'est la méthode la plus fiable pour bypasser Acapela et les proxies cassés.
+    playTTSAudio(idx, s.text, rate);
 } // end readSentence
 
 
+// ─── Google TTS via élément <audio> HTML5 (sans proxy, sans CORS) ────────────
+//
+// Pourquoi cette approche ?
+//  - fetch() exige que le serveur distant envoie des headers CORS → proxies nécessaires
+//  - new Audio(url) est une simple requête média → pas de CORS requis
+//  - Fonctionne directement avec l'URL Google Translate TTS
+//  - Le silentAudioEl maintient la session média → l'audio survit à l'écran éteint
+//
+let currentTTSAudio = null;  // élément <audio> en cours de lecture
+let nextTTSAudio    = null;  // élément <audio> suivant (pré-chargé)
 
-// ─── Fetch + decode une phrase via Google TTS (multi-proxy) ─────────────────
-// On essaie plusieurs proxies CORS en séquence — si l'un est down, on passe
-// au suivant. C'est la clé pour éviter le fallback Acapela.
-const TTS_PROXIES = [
-    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-    url => `https://cors.eu.org/${url}`,
-    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
-];
-
-async function fetchAudioBuffer(s, lang) {
+function makeTTSUrl(text, lang) {
     const langCode = lang.split('-')[0];
-    const textChunk = s.text.trim().substring(0, 200);
-    const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(textChunk)}&tl=${langCode}&client=tw-ob`;
-
-    let lastErr;
-    for (const makeProxy of TTS_PROXIES) {
-        const proxyUrl = makeProxy(ttsUrl);
-        const aborter = new AbortController();
-        const timeout = setTimeout(() => aborter.abort(), 10000);
-        try {
-            const res = await fetch(proxyUrl, { signal: aborter.signal });
-            clearTimeout(timeout);
-            if (!res.ok) { lastErr = new Error('HTTP ' + res.status); continue; }
-            const arrayBuf = await res.arrayBuffer();
-            if (arrayBuf.byteLength < 100) { lastErr = new Error('empty response'); continue; } // pas de vraie audio
-
-            if (!audioCtx || audioCtx.state === 'closed') {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            if (audioCtx.state === 'suspended') await audioCtx.resume().catch(() => {});
-
-            const decoded = await audioCtx.decodeAudioData(arrayBuf);
-            return decoded; // Succès !
-        } catch(e) {
-            clearTimeout(timeout);
-            lastErr = e;
-            console.warn(`[TTS] Proxy échoué: ${proxyUrl.substring(0,40)}...`, e.message);
-        }
-    }
-    throw lastErr || new Error('Tous les proxies ont échoué');
+    const textChunk = text.trim().substring(0, 200);
+    return `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(textChunk)}&tl=${langCode}&client=tw-ob`;
 }
 
-// ─── Lance le prefetch des PREFETCH_AHEAD prochaines phrases ───────────────────
-async function prefetchSentencesAhead(fromIdx, lang) {
-    for (let i = fromIdx; i < Math.min(fromIdx + PREFETCH_AHEAD, sentences.length); i++) {
-        if (prefetchCache.has(i) || prefetchInFlight.has(i)) continue;
-        prefetchInFlight.add(i);
-        const s = sentences[i];
-        fetchAudioBuffer(s, lang)
-            .then(buf => {
-                prefetchCache.set(i, buf);
-                prefetchInFlight.delete(i);
-                console.log(`[prefetch] ✅ Phrase ${i} prête en cache`);
-            })
-            .catch(err => {
-                prefetchInFlight.delete(i);
-                console.warn(`[prefetch] ❌ Phrase ${i} échouée:`, err.message);
-            });
-    }
-    // Evict old entries to keep memory under control (keep only last 3 + next PREFETCH_AHEAD)
-    for (const k of prefetchCache.keys()) {
-        if (k < fromIdx - 3 || k > fromIdx + PREFETCH_AHEAD) {
-            prefetchCache.delete(k);
-        }
+function makeTTSAudioEl(text, lang) {
+    const el = new Audio(makeTTSUrl(text, lang));
+    el.preload = 'auto'; // précharger en RAM pendant que la phrase précédente joue
+    return el;
+}
+
+// Pré-charge la phrase suivante pendant que la phrase courante joue
+function prefetchNextTTS(idx, lang) {
+    const nextIdx = idx + 1;
+    if (nextIdx < sentences.length && !nextTTSAudio) {
+        nextTTSAudio = makeTTSAudioEl(sentences[nextIdx].text, lang);
+        console.log(`[TTS] Prefetch phrase ${nextIdx}`);
     }
 }
 
-// ─── Vide le cache (changement de page / chapitre) ────────────────────────────
-function clearPrefetchCache() {
-    prefetchCache.clear();
-    prefetchInFlight.clear();
-}
-
-// ─── Joue un AudioBuffer déjà décodé ──────────────────────────────────────────
-function playCachedBuffer(buffer, idx, rate) {
+async function playTTSAudio(idx, text, rate) {
     if (!isPlaying || isPaused) return;
-    if (!audioCtx || audioCtx.state === 'closed') {
-        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    if (audioCtx.state === 'suspended') {
-        audioCtx.resume().catch(() => {});
+
+    // Arrêter ce qui joue éventuellement
+    if (currentTTSAudio) {
+        currentTTSAudio.onended = null;
+        currentTTSAudio.onerror = null;
+        currentTTSAudio.pause();
+        currentTTSAudio.src = '';
+        currentTTSAudio = null;
     }
 
-    if (activeVoiceNode) { try { activeVoiceNode.onended = null; activeVoiceNode.stop(); } catch(e) {} }
+    // Utiliser le pré-chargé si dispo, sinon en créer un nouveau
+    const audio = nextTTSAudio || makeTTSAudioEl(text, 'fr');
+    nextTTSAudio = null;
+    currentTTSAudio = audio;
 
-    activeVoiceNode = audioCtx.createBufferSource();
-    activeVoiceNode.buffer = buffer;
-    activeVoiceNode.playbackRate.value = Math.min(Math.max(rate, 0.5), 4.0);
-    activeVoiceNode.connect(audioCtx.destination);
-    activeVoiceNode.onended = () => {
-        activeVoiceNode = null;
+    audio.playbackRate = Math.min(Math.max(rate, 0.5), 2.0);
+
+    audio.onended = () => {
+        lastSpeakTime = Date.now();
+        currentTTSAudio = null;
         if (isPlaying && !isPaused) readSentence(idx + 1);
     };
-    lastSpeakTime = Date.now();
-    activeVoiceNode.start(0);
-}
 
-// ─── Fetch + joue une phrase (cache miss) ─────────────────────────────────────
-// En mode Google TTS, on ne tombe JAMAIS vers SpeechSynthesis (= Acapela).
-// Si tous les proxies échouent, on affiche une erreur et le watchdog relancera.
-async function fetchAndPlaySentence(idx, s, lang, rate) {
-    if (!isPlaying || isPaused) return;
+    audio.onerror = (e) => {
+        console.error('[TTS audio] Erreur lecture phrase', idx, e);
+        showTtsStatus('❌ Google TTS — erreur. Nouvelle tentative...');
+        currentTTSAudio = null;
+        lastSpeakTime = Date.now() - 4000; // watchdog retentera dans ~1s
+    };
+
     try {
-        showTtsStatus('⏳ Connexion Google TTS...');
-        const buffer = await fetchAudioBuffer(s, lang);
-        if (!isPlaying || isPaused) return;
-        prefetchCache.set(idx, buffer);
-        prefetchInFlight.delete(idx);
-        showTtsStatus(''); // OK, plus besoin du message
-        playCachedBuffer(buffer, idx, rate);
-    } catch(e) {
-        if (!isPlaying || isPaused) return;
-        console.error('[TTS Google] TOUS les proxies ont échoué pour phrase', idx, e);
-        showTtsStatus('❌ Google TTS indisponible — vérifiez votre connexion');
-        // Laisser lastSpeakTime proche pour que le watchdog retente dans 5s
+        showTtsStatus('');
+        await audio.play();
+        lastSpeakTime = Date.now();
+        // Pré-charger la phrase d'après pendant que celle-ci joue
+        prefetchNextTTS(idx, 'fr');
+    } catch(err) {
+        console.error('[TTS audio] Impossible de jouer phrase', idx, err.message);
+        showTtsStatus('❌ Google TTS indisponible');
+        currentTTSAudio = null;
         lastSpeakTime = Date.now() - 4000;
-        // Pas de fallback Acapela : on retente via le watchdog
     }
 }
+
+// Compat : appelé par stopSpeaking() + watchdog
+function stopTTSAudio() {
+    if (currentTTSAudio) {
+        currentTTSAudio.onended = null;
+        currentTTSAudio.onerror = null;
+        currentTTSAudio.pause();
+        currentTTSAudio.src = '';
+        currentTTSAudio = null;
+    }
+    nextTTSAudio = null;
+}
+
+// stubs pour compatibilité (plus utilisés mais appelés depuis clearPrefetchCache etc.)
+function clearPrefetchCache() { nextTTSAudio = null; }
+
 
 // ─── Highlighting via Selection API (non-destructive, no DOM mutation) ────────
 function clearHighlight() {
