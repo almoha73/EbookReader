@@ -71,9 +71,17 @@ document.addEventListener('DOMContentLoaded', () => {
     if (syncBtn) {
         syncBtn.addEventListener('click', () => {
             if (driveAccessToken) {
-                // Déjà connecté, on force une synchro et on affiche une alerte amicale
-                triggerFullSync(true);
-                alert("Synchronisation locale → Cloud en cours...");
+                if (confirm("Votre Drive est actuellement synchronisé.\nVoulez-vous réagir (Annuler) ou vous DÉCONNECTER du Cloud (OK) ?")) {
+                    localStorage.removeItem('drive_token');
+                    localStorage.removeItem('drive_token_expiry');
+                    driveAccessToken = null;
+                    if (gapi.client && gapi.client.getToken() !== null) {
+                        gapi.client.setToken(null);
+                    }
+                    updateSyncBtnState(false);
+                } else {
+                    triggerFullSync(true);
+                }
             } else {
                 // Pas connecté, on ouvre la popup Google
                 tokenClient.requestAccessToken({prompt: 'consent'});
@@ -222,11 +230,17 @@ function mergeCloudState(cloudState, forceRefresh) {
     
     if (aBookWasUpdated && forceRefresh) {
         alert("Des positions de lecture plus récentes ont été récupérées depuis le Cloud.");
-        location.reload();
+        if (typeof window.applyCloudUpdate === 'function') {
+            window.applyCloudUpdate(cloudState);
+        } else {
+            location.reload();
+        }
     } else if (currentBookUpdated) {
-        // L'utilisateur est en train de lire et le cloud vient de télécharger en arrière-plan une meilleure position
-        console.log("Sync background: Le livre en cours a été mis à jour par le Cloud. Rafraîchissement...");
-        location.reload();
+        if (typeof window.applyCloudUpdate === 'function') {
+            window.applyCloudUpdate(cloudState);
+        } else {
+            location.reload();
+        }
     }
 }
 
