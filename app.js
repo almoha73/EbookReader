@@ -35,6 +35,7 @@ let currentTheme = localStorage.getItem('reader_theme') || 'light';
 const globalTTSAudio = new Audio();
 globalTTSAudio.referrerPolicy = 'no-referrer';
 globalTTSAudio.preload = 'auto';
+globalTTSAudio.crossOrigin = 'anonymous';
 
 let isPlaying  = false;
 let pendingAutoRead = false;
@@ -611,7 +612,9 @@ function startPlaying() {
     isPaused  = false;
     sentenceIdx = 0;
     setPlayIcon('pause');
-    globalTTSAudio.play().catch(()=>{}); // force unlock autoplay
+    // Unlock audio on real user gesture
+    globalTTSAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
+    globalTTSAudio.play().catch(()=>{});
     requestWakeLock();  // Keep screen on during reading
     startBackgroundSession();
     startPageReading();
@@ -727,9 +730,9 @@ function startBackgroundSession() {
     if (!silentAudioEl) {
         silentAudioEl = document.getElementById('silent-audio');
         if (!silentAudioEl) {
-            silentAudioEl = new Audio('silent_1h.mp3');
+            silentAudioEl = new Audio('data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==');
         } else if (!silentAudioEl.src) {
-            silentAudioEl.src = 'silent_1h.mp3';
+            silentAudioEl.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
         }
         silentAudioEl.loop = true;
         silentAudioEl.volume = 0.001; // Quasi-inaudible mais non nul (important !)
@@ -762,7 +765,7 @@ function startBackgroundSession() {
         if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(() => {});
         // Relancer si plus aucun audio TTS ne joue depuis 5s
         if (globalTTSAudio.paused && Date.now() - lastSpeakTime > 5000) {
-            console.warn('⚠ Watchdog: audio mort. Relance phrase', sentenceIdx);
+            showTtsStatus('⏳ Réveil audio...'); console.warn('Watchdog');
             readSentence(sentenceIdx);
         }
     }, 2000);
@@ -1083,11 +1086,9 @@ function readSentence(idx) {
 //
 let ttsFailCount = 0;
 
-function buildTTSUrls(text) {
-    const t200 = encodeURIComponent(text.trim().substring(0, 200));
-    return [
-        `https://translate.google.com/translate_tts?ie=UTF-8&q=${t200}&tl=fr&client=tw-ob`,
-        `https://translate.google.com/translate_tts?ie=UTF-8&q=${t200}&tl=fr&client=gtx` // Fallback immédiat
+&tl=fr&client=gtx`,
+        `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${t200}&tl=fr&client=gtx`,
+        `https://translate.google.com.vn/translate_tts?ie=UTF-8&q=${t200}&tl=fr&client=tw-ob`
     ];
 }
 
@@ -1100,76 +1101,65 @@ async function playTTSAudio(idx, text, rate) {
     globalTTSAudio.onerror = null;
     globalTTSAudio.playbackRate = Math.min(Math.max(rate, 0.5), 2.0);
 
-    const urls = buildTTSUrls(text);
-    let success = false;
+    const t200 = encodeURIComponent(text.trim().substring(0, 200));
+    const random = Math.floor(Math.random() * 100000);
+    const urls = [
+        `https://translate.googleapis.com/translate_tts?client=gtx&sl=fr&tl=fr&dt=t&q=${t200}&cb=${random}`,
+        `https://translate.google.com/translate_tts?ie=UTF-8&q=${t200}&tl=fr&client=tw-ob&cb=${random}`,
+        `https://translate.google.fr/translate_tts?ie=UTF-8&q=${t200}&tl=fr&client=tw-ob&cb=${random}`
+    ];
 
-    showTtsStatus(''); // clean
+    let currentUrlIdx = 0;
 
-    for (const url of urls) {
+    const tryNext = () => {
         if (!isPlaying || isPaused) return;
+        if (currentUrlIdx >= urls.length) {
+            ttsFailCount++;
+            console.error('[TTS] Échec total phrase', idx);
+            if (ttsFailCount >= 3) {
+                showTtsStatus('❌ Connexion Google TTS bloquée ou instable. Cliquez sur PAUSE puis PLAY pour relancer.');
+                pausePlaying();
+            } else {
+                showTtsStatus('⏳ Erreur réseau, nouvelle tentative...');
+                setTimeout(() => { if (isPlaying && !isPaused) readSentence(idx); }, 3000);
+            }
+            return;
+        }
+
+        const url = urls[currentUrlIdx++];
+        console.log(`[TTS] Essai ${currentUrlIdx}: ${url.substring(0, 80)}...`);
         
-        try {
-            await new Promise((resolve, reject) => {
-                // Timeout au cas où l'événement play() ne résolve jamais (connexion perdue)
-                const timeoutId = setTimeout(() => reject(new Error('timeout')), 5000);
-                
-                globalTTSAudio.onended = null;
-                globalTTSAudio.onerror = () => {
-                    clearTimeout(timeoutId);
-                    reject(new Error('onerror event'));
-                };
-                
-                globalTTSAudio.src = url;
-                globalTTSAudio.play().then(() => {
-                    clearTimeout(timeoutId);
-                    resolve();
-                }).catch((err) => {
-                    clearTimeout(timeoutId);
-                    reject(err);
-                });
-            });
-            success = true; // Une URL a marché !
-            break; 
-        } catch(e) {
-            console.warn('[TTS] Échec URL:', url.substring(0, 80), e.message);
-        }
-    }
+        // Timeout de sécurité pour cette URL
+        const loadTimer = setTimeout(() => {
+            if (globalTTSAudio.src === url && (globalTTSAudio.paused || globalTTSAudio.readyState < 2)) {
+                console.warn('[TTS] Timeout URL — essai suivant');
+                tryNext();
+            }
+        }, 7000);
 
-    if (!isPlaying || isPaused) {
-        globalTTSAudio.pause(); 
-        return;
-    }
+        globalTTSAudio.onended = () => {
+            clearTimeout(loadTimer);
+            ttsFailCount = 0;
+            lastSpeakTime = Date.now();
+            showTtsStatus('');
+            if (isPlaying && !isPaused) readSentence(idx + 1);
+        };
 
-    if (!success) {
-        ttsFailCount++;
-        console.error('[TTS] Échec total phrase', idx, `(${ttsFailCount} consécutifs)`);
-        if (ttsFailCount >= 3) {
-            showTtsStatus('❌ TTS indisponible — vérifiez votre connexion réseau');
-            pausePlaying(); // Arrêt pour stopper la boucle infinie
-        } else {
-            showTtsStatus('⏭ Erreur connexion Google — en cours de relance...');
-            setTimeout(() => {
-                showTtsStatus('');
-                if (isPlaying && !isPaused) readSentence(idx); // Retenter ou avancer ? On va retenter la même après 2s. (watchdog le fera si off)
-            }, 2000);
-        }
-        return;
-    }
+        globalTTSAudio.onerror = () => {
+            clearTimeout(loadTimer);
+            console.warn('[TTS] Erreur URL — essai suivant');
+            tryNext();
+        };
 
-    // Succès !
-    ttsFailCount = 0;
-    showTtsStatus('');
-    lastSpeakTime = Date.now();
-
-    // On branche l'enchaînement normal
-    globalTTSAudio.onended = () => {
-        lastSpeakTime = Date.now();
-        if (isPlaying && !isPaused) readSentence(idx + 1);
+        globalTTSAudio.src = url;
+        globalTTSAudio.play().catch(e => {
+            // Autoplay peut être bloqué si le geste utilisateur est trop vieux
+            console.warn('[TTS] play() bloqué ou erreur:', e.message);
+            // On ne tryNext pas forcément ici, on laisse le onerror ou timeout agir
+        });
     };
-    globalTTSAudio.onerror = () => {
-        lastSpeakTime = Date.now();
-        if (isPlaying && !isPaused) readSentence(idx + 1);
-    };
+
+    tryNext();
 }
 
 // Arrête l'audio TTS
