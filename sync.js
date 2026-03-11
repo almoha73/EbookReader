@@ -1,284 +1,264 @@
+// ─── Google Drive Sync Module ─────────────────────────────────────────────────
+// Synchronise la progression de lecture (CFI, sentenceIdx, réglages) vers
+// le dossier AppData de Google Drive — invisible dans le drive de l'utilisateur.
+
 const CLIENT_ID = '48999229055-1uichl6e4ot9r4cnjaj8ts0dum7g71p3.apps.googleusercontent.com';
-const SCOPES = 'https://www.googleapis.com/auth/drive.appdata';
+const SCOPES    = 'https://www.googleapis.com/auth/drive.appdata';
+const SYNC_FILENAME = 'ebook_reader_sync.json';
 
-let tokenClient;
-let gapiInited = false;
-let gisInited = false;
+let tokenClient     = null;
 let driveAccessToken = null;
+let syncFileId      = null; // cache pour éviter de refaire list() à chaque fois
 
+// ─── Initialisation GAPI ──────────────────────────────────────────────────────
 function gapiLoaded() {
-    gapi.load('client', initializeGapiClient);
-}
-
-async function initializeGapiClient() {
-    await gapi.client.init({
-        discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/drive/v3/rest"],
+    gapi.load('client', async () => {
+        await gapi.client.init({
+            discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'],
+        });
+        console.log('[Sync] GAPI client initialisé');
+        tryRestoreSession();
     });
-    gapiInited = true;
-    checkExistingToken();
 }
 
+// ─── Initialisation GIS ───────────────────────────────────────────────────────
 function gisLoaded() {
     tokenClient = google.accounts.oauth2.initTokenClient({
         client_id: CLIENT_ID,
         scope: SCOPES,
-        callback: (tokenResponse) => {
-            if (tokenResponse.error !== undefined) {
-                console.error(tokenResponse);
-                return;
-            }
-            driveAccessToken = tokenResponse.access_token;
-            localStorage.setItem('drive_token', driveAccessToken);
-            localStorage.setItem('drive_token_expiry', Date.now() + 3500 * 1000); // Expires in 1h
-            updateSyncBtnState(true);
-            triggerFullSync(true); // Force sync from cloud on login
-        },
+        callback: handleTokenResponse,
     });
-    gisInited = true;
+    console.log('[Sync] GIS tokenClient initialisé');
 }
 
-function checkExistingToken() {
-    const savedToken = localStorage.getItem('drive_token');
-    const expiry = localStorage.getItem('drive_token_expiry');
-    // Vérifier si le token n'est pas expiré (marge de sécurité)
-    if (savedToken && expiry && Date.now() < parseInt(expiry, 10)) {
-        gapi.client.setToken({ access_token: savedToken });
-        driveAccessToken = savedToken;
-        updateSyncBtnState(true);
-        // Sync silencieuse en arrière-plan à l'ouverture de l'appli
-        triggerFullSync(false);
+function handleTokenResponse(resp) {
+    if (resp.error) {
+        console.error('[Sync] Erreur token:', resp);
+        return;
+    }
+    driveAccessToken = resp.access_token;
+    const expiry = Date.now() + (resp.expires_in - 60) * 1000;
+    localStorage.setItem('drive_token', driveAccessToken);
+    localStorage.setItem('drive_token_expiry', String(expiry));
+    gapi.client.setToken({ access_token: driveAccessToken });
+    updateSyncBtn(true);
+    console.log('[Sync] Connecté à Google Drive');
+    // Synchronisation immédiate après connexion
+    doSync(true);
+}
+
+// ─── Restauration de session ──────────────────────────────────────────────────
+function tryRestoreSession() {
+    const token  = localStorage.getItem('drive_token');
+    const expiry = parseInt(localStorage.getItem('drive_token_expiry') || '0', 10);
+    if (token && Date.now() < expiry) {
+        driveAccessToken = token;
+        gapi.client.setToken({ access_token: token });
+        updateSyncBtn(true);
+        console.log('[Sync] Session restaurée depuis localStorage');
+        // Sync silencieuse au démarrage
+        doSync(false);
     } else {
         localStorage.removeItem('drive_token');
         localStorage.removeItem('drive_token_expiry');
-        updateSyncBtnState(false);
+        updateSyncBtn(false);
     }
 }
 
-function updateSyncBtnState(isConnected) {
+// ─── UI du bouton ─────────────────────────────────────────────────────────────
+function updateSyncBtn(connected) {
     const btn = document.getElementById('google-sync-btn');
     if (!btn) return;
-    if (isConnected) {
-        btn.innerHTML = '<i class="fas fa-check"></i> Drive Synchronisé';
-        btn.style.background = 'linear-gradient(135deg, #34A853, #1e8e3e)';
+    if (connected) {
+        btn.innerHTML  = '<i class="fas fa-check-circle"></i> Drive ✓';
+        btn.style.background = 'linear-gradient(135deg, #34A853, #1a7a38)';
     } else {
-        btn.innerHTML = '<i class="fab fa-google"></i> Cloud Sync';
+        btn.innerHTML  = '<i class="fab fa-google"></i> Cloud Sync';
         btn.style.background = 'linear-gradient(135deg, #4285F4, #34A853)';
     }
 }
 
+// ─── Clic sur le bouton ───────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
-    const syncBtn = document.getElementById('google-sync-btn');
-    if (syncBtn) {
-        syncBtn.addEventListener('click', () => {
-            if (driveAccessToken) {
-                if (confirm("Votre Drive est actuellement synchronisé.\nVoulez-vous réagir (Annuler) ou vous DÉCONNECTER du Cloud (OK) ?")) {
-                    localStorage.removeItem('drive_token');
-                    localStorage.removeItem('drive_token_expiry');
-                    driveAccessToken = null;
-                    if (gapi.client && gapi.client.getToken() !== null) {
-                        gapi.client.setToken(null);
-                    }
-                    updateSyncBtnState(false);
-                } else {
-                    triggerFullSync(true);
-                }
+    const btn = document.getElementById('google-sync-btn');
+    if (!btn) return;
+
+    btn.addEventListener('click', () => {
+        if (driveAccessToken) {
+            // Menu : Forcer synchro ou déconnexion
+            const choice = confirm(
+                'Drive synchronisé ✓\n\n' +
+                'Cliquez sur OK pour FORCER une synchronisation maintenant.\n' +
+                'Cliquez sur Annuler pour vous DÉCONNECTER du Cloud.'
+            );
+            if (choice) {
+                doSync(true).then(() => alert('Synchronisation terminée !'));
             } else {
-                // Pas connecté, on ouvre la popup Google
-                tokenClient.requestAccessToken({prompt: 'consent'});
+                disconnect();
             }
-        });
-    }
+        } else {
+            if (!tokenClient) { alert('Chargement en cours, réessayez dans 2 secondes.'); return; }
+            tokenClient.requestAccessToken({ prompt: 'consent' });
+        }
+    });
 });
 
-// --- Drive File Logic ---
-
-async function getOrCreateSyncFile() {
-    try {
-        const response = await gapi.client.drive.files.list({
-            spaces: 'appDataFolder',
-            q: "name='ebook_reader_sync.json'",
-            fields: 'files(id, name)'
-        });
-        const files = response.result.files;
-        if (files && files.length > 0) {
-            return files[0].id;
-        } else {
-            console.log("Création du fichier de synchronisation initial sur Drive...");
-            const fileMetadata = {
-                'name': 'ebook_reader_sync.json',
-                'parents': ['appDataFolder']
-            };
-            const createRes = await gapi.client.drive.files.create({
-                resource: fileMetadata,
-                fields: 'id'
-            });
-            return createRes.result.id;
-        }
-    } catch (err) {
-        console.error("Erreur d'accès au Drive: ", err);
-        return null;
-    }
+function disconnect() {
+    localStorage.removeItem('drive_token');
+    localStorage.removeItem('drive_token_expiry');
+    driveAccessToken  = null;
+    syncFileId        = null;
+    if (gapi.client) gapi.client.setToken(null);
+    updateSyncBtn(false);
+    console.log('[Sync] Déconnecté');
 }
 
-// Uploads a JSON object to the specified file ID
-async function uploadToDrive(fileId, dataObj) {
-    const boundary = '-------314159265358979323846';
-    const delimiter = "\r\n--" + boundary + "\r\n";
-    const close_delim = "\r\n--" + boundary + "--";
-
-    const contentType = 'application/json';
-    const body = JSON.stringify(dataObj);
-
-    const multipartRequestBody =
-        delimiter +
-        'Content-Type: application/json\r\n\r\n' +
-        JSON.stringify({ mimeType: contentType }) +
-        delimiter +
-        'Content-Type: ' + contentType + '\r\n\r\n' +
-        body +
-        close_delim;
-
-    try {
-        await gapi.client.request({
-            'path': '/upload/drive/v3/files/' + fileId,
-            'method': 'PATCH',
-            'params': {'uploadType': 'multipart'},
-            'headers': {
-                'Content-Type': 'multipart/related; boundary="' + boundary + '"'
-            },
-            'body': multipartRequestBody
+// ─── Utilitaires Drive ────────────────────────────────────────────────────────
+async function getSyncFileId() {
+    if (syncFileId) return syncFileId; // cache HIT
+    const res = await gapi.client.drive.files.list({
+        spaces: 'appDataFolder',
+        q: `name='${SYNC_FILENAME}'`,
+        fields: 'files(id)',
+        pageSize: 1,
+    });
+    const files = res.result.files;
+    if (files && files.length > 0) {
+        syncFileId = files[0].id;
+        console.log('[Sync] Fichier Drive trouvé:', syncFileId);
+    } else {
+        // Créer le fichier
+        const createRes = await gapi.client.drive.files.create({
+            resource: { name: SYNC_FILENAME, parents: ['appDataFolder'] },
+            fields: 'id',
         });
-        console.log("☁️ Sauvegardé sur le Cloud avec succès !");
+        syncFileId = createRes.result.id;
+        console.log('[Sync] Fichier Drive créé:', syncFileId);
+    }
+    return syncFileId;
+}
+
+async function uploadState(fileId, data) {
+    const content = JSON.stringify(data);
+    const boundary = 'eb83cf6b8e2a4bad';
+    const body =
+        `--${boundary}\r\nContent-Type: application/json\r\n\r\n` +
+        JSON.stringify({ mimeType: 'application/json' }) +
+        `\r\n--${boundary}\r\nContent-Type: application/json\r\n\r\n` +
+        content +
+        `\r\n--${boundary}--`;
+
+    await gapi.client.request({
+        path: `/upload/drive/v3/files/${fileId}`,
+        method: 'PATCH',
+        params: { uploadType: 'multipart' },
+        headers: { 'Content-Type': `multipart/related; boundary=${boundary}` },
+        body,
+    });
+    console.log('[Sync] ☁️ Upload OK, état local poussé sur Drive');
+}
+
+async function downloadState(fileId) {
+    try {
+        const res = await gapi.client.drive.files.get({ fileId, alt: 'media' });
+        const data = (typeof res.result === 'object') ? res.result : JSON.parse(res.result);
+        console.log('[Sync] ⬇️ Téléchargé depuis Drive:', data);
+        return data;
     } catch (e) {
-        console.error("Erreur d'upload vers Cloud", e);
+        if (e.status === 404) return null;
+        console.error('[Sync] Erreur download:', e);
+        throw e;
     }
 }
 
-// Download cloud state
-async function downloadFromDrive(fileId) {
-    try {
-        const response = await gapi.client.drive.files.get({
-            fileId: fileId,
-            alt: 'media'
-        });
-        return typeof response.result === 'object' ? response.result : JSON.parse(response.result);
-    } catch (err) {
-        if (err.status === 404) return {}; 
-        return null;
-    }
-}
-
-// Extraction depuis LocalStorage
-function getLocalSyncState() {
+// ─── Collecte de l'état local ─────────────────────────────────────────────────
+function getLocalState() {
     const state = {
-        last_sync: Date.now(),
+        _version: 2,
         settings: {
-            theme: localStorage.getItem('reader_theme') || 'light',
-            rate: localStorage.getItem('reader_playbackRate') || '1.0',
-            highlightColor: localStorage.getItem('reader_highlightColor') || '#FFE033'
+            theme:          localStorage.getItem('reader_theme') || 'light',
+            rate:           localStorage.getItem('reader_playbackRate') || '1.0',
+            highlightColor: localStorage.getItem('reader_highlightColor') || '#FFE033',
         },
-        books: {}
+        books: {},
     };
-
     for (let i = 0; i < localStorage.length; i++) {
         const key = localStorage.key(i);
-        if (key.startsWith('cfi_')) {
-            const bookId = key.substring(4);
-            if (!state.books[bookId]) state.books[bookId] = {};
-            state.books[bookId].cfi = localStorage.getItem(key);
-            state.books[bookId].last_update = parseInt(localStorage.getItem(`last_${bookId}`) || '0', 10);
-            
-            // On récupère aussi la phrase si elle existe
+        if (key && key.startsWith('cfi_')) {
+            const bookId = key.slice(4);
+            const lastUpdate = parseInt(localStorage.getItem(`last_${bookId}`) || '0', 10);
             const sIdx = localStorage.getItem(`sentenceIdx_${bookId}`);
-            if (sIdx !== null) state.books[bookId].sentenceIdx = parseInt(sIdx, 10);
+            state.books[bookId] = {
+                cfi: localStorage.getItem(key),
+                last_update: lastUpdate,
+                ...(sIdx !== null ? { sentenceIdx: parseInt(sIdx, 10) } : {}),
+            };
         }
     }
+    console.log('[Sync] État local collecté:', JSON.stringify(state.books));
     return state;
 }
 
-// Fusionne le statut Cloud dans le local
-function mergeCloudState(cloudState, forceRefresh) {
-    if (!cloudState || !cloudState.books) return;
-    
-    // Application des paramètres si on veut forcer
-    if (forceRefresh && cloudState.settings) {
-        if (cloudState.settings.theme) localStorage.setItem('reader_theme', cloudState.settings.theme);
-        if (cloudState.settings.rate) localStorage.setItem('reader_playbackRate', cloudState.settings.rate);
-        if (cloudState.settings.highlightColor) localStorage.setItem('reader_highlightColor', cloudState.settings.highlightColor);
-    }
+// ─── Fusion cloud → local ─────────────────────────────────────────────────────
+function mergeCloud(cloudState) {
+    if (!cloudState || !cloudState.books) return false;
 
-    let aBookWasUpdated = false;
-    let currentBookUpdated = false;
-
-    // Comparaison des dates pour chaque livre
+    let updated = false;
     for (const [bookId, cloudBook] of Object.entries(cloudState.books)) {
-        const localUpdateTime = parseInt(localStorage.getItem(`last_${bookId}`) || '0', 10);
-        const cloudUpdateTime = cloudBook.last_update || 0;
-
-        // Si le cloud a une version plus récente
-        if (cloudUpdateTime > localUpdateTime) {
-            console.log(`Mise à jour Cloud pour le livre ${bookId}`);
+        const localTime = parseInt(localStorage.getItem(`last_${bookId}`) || '0', 10);
+        const cloudTime = cloudBook.last_update || 0;
+        console.log(`[Sync] Livre ${bookId}: local=${localTime}, cloud=${cloudTime}`);
+        if (cloudTime > localTime) {
+            console.log(`[Sync] → Cloud plus récent, mise à jour locale pour ${bookId}`);
             if (cloudBook.cfi) localStorage.setItem(`cfi_${bookId}`, cloudBook.cfi);
-            if (cloudBook.sentenceIdx !== undefined) localStorage.setItem(`sentenceIdx_${bookId}`, cloudBook.sentenceIdx);
-            localStorage.setItem(`last_${bookId}`, cloudUpdateTime.toString());
-            aBookWasUpdated = true;
+            localStorage.setItem(`last_${bookId}`, String(cloudTime));
+            if (cloudBook.sentenceIdx !== undefined) {
+                localStorage.setItem(`sentenceIdx_${bookId}`, String(cloudBook.sentenceIdx));
+            }
+            updated = true;
+
+            // Si ce livre est actuellement ouvert, on y va directement
             if (typeof window.currentBookId !== 'undefined' && window.currentBookId === bookId) {
-                currentBookUpdated = true;
+                if (typeof window.rendition !== 'undefined' && window.rendition && cloudBook.cfi) {
+                    console.log('[Sync] Livre ouvert → saut vers', cloudBook.cfi);
+                    window.rendition.display(cloudBook.cfi);
+                }
             }
         }
     }
-    
-    if (aBookWasUpdated && forceRefresh) {
-        alert("Des positions de lecture plus récentes ont été récupérées depuis le Cloud.");
-        if (typeof window.applyCloudUpdate === 'function') {
-            window.applyCloudUpdate(cloudState);
-        } else {
-            location.reload();
-        }
-    } else if (currentBookUpdated) {
-        if (typeof window.applyCloudUpdate === 'function') {
-            window.applyCloudUpdate(cloudState);
-        } else {
-            location.reload();
-        }
-    }
+    return updated;
 }
 
-// La fonction principale de synchro
-async function triggerFullSync(forceRefresh = false) {
+// ─── Sync complète ────────────────────────────────────────────────────────────
+async function doSync(notifyIfUpdated = false) {
     if (!driveAccessToken) return;
-
     try {
-        const fileId = await getOrCreateSyncFile();
-        if (!fileId) return;
+        const fileId = await getSyncFileId();
 
-        // 1. On rapatrie d'abord ce qui est sur le cloud pour avoir la dernière version
-        const cloudState = await downloadFromDrive(fileId);
+        // 1. Télécharger l'état cloud
+        const cloudState = await downloadState(fileId);
+        let cloudUpdated = false;
         if (cloudState) {
-            mergeCloudState(cloudState, forceRefresh);
+            cloudUpdated = mergeCloud(cloudState);
         }
-        
-        // 2. On pousse notre statut local fusionné vers le Cloud
-        const newState = getLocalSyncState();
-        await uploadToDrive(fileId, newState);
 
-    } catch (e) {
-        console.error("Échec de la synchronisation", e);
-        if (e.status === 401) {
-            localStorage.removeItem('drive_token');
-            localStorage.removeItem('drive_token_expiry');
-            driveAccessToken = null;
-            updateSyncBtnState(false);
+        // 2. Pousser l'état local (potentiellement enrichi)
+        const localState = getLocalState();
+        await uploadState(fileId, localState);
+
+        if (cloudUpdated && notifyIfUpdated) {
+            console.log('[Sync] Positions récupérées depuis le Cloud');
         }
+    } catch (e) {
+        console.error('[Sync] Erreur:', e);
+        if (e.status === 401) disconnect(); // Token expiré
     }
 }
 
-// Fonction utilitaire attachée à window pour être appelée depuis app.js
+// ─── Hook pour app.js ─────────────────────────────────────────────────────────
+let _syncDebounceTimer = null;
 window.requestCloudSync = () => {
     if (!driveAccessToken) return;
-    if (window.cloudSyncTimer) clearTimeout(window.cloudSyncTimer);
-    // Debounce : on attend 5 secondes après la dernière activité pour ne pas spammer Google Drive
-    window.cloudSyncTimer = setTimeout(() => {
-        triggerFullSync(false);
-    }, 5000);
+    clearTimeout(_syncDebounceTimer);
+    _syncDebounceTimer = setTimeout(() => doSync(false), 5000);
 };
