@@ -37,6 +37,9 @@ const synth = window.speechSynthesis;
 let voices  = [];
 let voicesReady = false;
 
+// Mode voix : 'google' = Google TTS réseau (bypass Android), 'local' = SpeechSynthesis système
+let voiceMode = localStorage.getItem('reader_voice_mode') || 'google';
+
 let isPlaying  = false;
 let pendingAutoRead = false;  // set when TTS finishes a page → triggers read on next render
 let isPaused   = false;
@@ -112,9 +115,35 @@ function populateVoiceList() {
 
 
 // Call immediately AND on event (Chrome fires the event, Firefox already has them)
-console.log('EbookReader v20250311 loaded');
+console.log('EbookReader v20250311b loaded');
 populateVoiceList();
 speechSynthesis.onvoiceschanged = () => { populateVoiceList(); };
+
+// ─── Toggle Mode Voix (Google TTS réseau vs Voix locale) ─────────────────────
+const modeGoogleBtn   = document.getElementById('mode-google');
+const modeLocalBtn    = document.getElementById('mode-local');
+const localVoiceGroup = document.getElementById('local-voice-group');
+
+function applyVoiceMode(mode) {
+    voiceMode = mode;
+    localStorage.setItem('reader_voice_mode', mode);
+    if (mode === 'google') {
+        modeGoogleBtn?.classList.add('active');
+        modeLocalBtn?.classList.remove('active');
+        if (localVoiceGroup) localVoiceGroup.style.display = 'none';
+    } else {
+        modeLocalBtn?.classList.add('active');
+        modeGoogleBtn?.classList.remove('active');
+        if (localVoiceGroup) localVoiceGroup.style.display = '';
+    }
+    console.log('[voiceMode] →', mode);
+}
+
+// Init UI selon le mode sauvegardé
+applyVoiceMode(voiceMode);
+
+modeGoogleBtn?.addEventListener('click', () => applyVoiceMode('google'));
+modeLocalBtn?.addEventListener('click',  () => applyVoiceMode('local'));
 
 
 // ─── Init ────────────────────────────────────────────────────────────────────
@@ -1135,44 +1164,43 @@ function readSentence(idx) {
     const lang = selectedVoice ? selectedVoice.lang : 'fr-FR';
     const rate = parseFloat(rateSelect.value);
 
-    // ────────────────────────────────────────────────────────────────────
-    // STRATÉGIE : SpeechSynthesis avec la voix sélectionnée (Acapela, etc.)
-    // ────────────────────────────────────────────────────────────────────
-    // SpeechSynthesis est le seul moyen d'utiliser des voix locales (Acapela, etc.).
-    // Pour survivre à l'écran éteint sur Android, le synthResumeTimer (couche 2 du
-    // startBackgroundSession) appelle synth.resume() toutes les 500ms, ce qui
-    // combat le pause automatique qu'Android impose à speechSynthesis.
-    // --
-    // On lance d'abord SpeechSynthesis. Si la voix est une voix réseau (online-only)
-    // et que ça échoue, on bascule sur Google TTS via WebAudio (prefetch cache).
-    const utt = new SpeechSynthesisUtterance(s.text);
-    if (selectedVoice) utt.voice = selectedVoice;
-    utt.rate = rate;
-    utt.lang = lang;
-    utt.onstart = () => { lastSpeakTime = Date.now(); };
-    utt.onend = () => {
-        if (isPlaying && !isPaused) readSentence(idx + 1);
-    };
-    utt.onerror = (err) => {
-        console.warn('[SpeechSynth] erré sur phrase', idx, err.error);
-        if (err.error === 'canceled' || err.error === 'interrupted') return;
-        // Tenter le fallback Google TTS si SpeechSynth échoue
-        if (isPlaying && !isPaused) {
+    // ────────────────────────────────────────────────────────────────────────
+    // DISPATCH selon le mode choisi par l'utilisateur
+    // ────────────────────────────────────────────────────────────────────────
+    if (voiceMode === 'google') {
+        // Mode Google TTS : fetch MP3 depuis Google Translate via proxy,
+        // joué via WebAudio API — bypasse COMPLÈTEMENT le système TTS Android.
+        // C'est la seule façon de ne PAS entendre Acapela si elle est moteur système.
+        // Prefetch en RAM pour survivre à l'extinction de l'écran.
+        prefetchSentencesAhead(idx, lang);
+        const cachedBuf = prefetchCache.get(idx);
+        if (cachedBuf) {
+            playCachedBuffer(cachedBuf, idx, rate);
+        } else {
             fetchAndPlaySentence(idx, s, lang, rate);
         }
-    };
-
-    // Annuler toute utterance en cours avant de parler
-    synth.cancel();
-    // Petit délai pour laisser cancel() prendre effet (bug Chrome faméux)
-    setTimeout(() => {
-        if (isPlaying && !isPaused) {
-            synth.speak(utt);
-            // Lancer le prefetch Google TTS en arrière-plan comme filet de sécurité
-            prefetchSentencesAhead(idx, lang);
-        }
-    }, 50);
+    } else {
+        // Mode Voix locale : SpeechSynthesis avec la voix sélectionnée (Acapela, etc.)
+        // Le synthResumeTimer appelle synth.resume() toutes les 500ms pour survivre
+        // à la mise en pause automatique d'Android écran éteint.
+        const utt = new SpeechSynthesisUtterance(s.text);
+        if (selectedVoice) utt.voice = selectedVoice;
+        utt.rate = rate;
+        utt.lang = lang;
+        utt.onstart = () => { lastSpeakTime = Date.now(); };
+        utt.onend   = () => { if (isPlaying && !isPaused) readSentence(idx + 1); };
+        utt.onerror = (err) => {
+            if (err.error === 'canceled' || err.error === 'interrupted') return;
+            console.warn('[SpeechSynth] err phrase', idx, err.error);
+            if (isPlaying && !isPaused) readSentence(idx + 1);
+        };
+        synth.cancel();
+        setTimeout(() => {
+            if (isPlaying && !isPaused) synth.speak(utt);
+        }, 50);
+    }
 } // end readSentence
+
 
 // ─── Fetch + decode une phrase et met en cache ─────────────────────────────────
 async function fetchAudioBuffer(s, lang) {

@@ -70,7 +70,19 @@
                 <h3>Paramètres</h3>
                 
                 <div class="setting-group">
-                    <label>Voix (Text-To-Speech)</label>
+                    <label>Mode voix</label>
+                    <div class="font-size-controls" id="voice-mode-toggle">
+                        <button id="mode-google" class="mode-btn active" title="Télécharge la voix Google depuis Internet — fonctionne écran éteint">
+                            🌐 Google&nbsp;TTS
+                        </button>
+                        <button id="mode-local" class="mode-btn" title="Utilise la voix installée sur le téléphone (peut s'arrêter écran éteint)">
+                            📱 Voix locale
+                        </button>
+                    </div>
+                </div>
+
+                <div class="setting-group" id="local-voice-group" style="display:none">
+                    <label>Voix locale (français)</label>
                     <select id="voice-select"></select>
                 </div>
 
@@ -100,6 +112,6 @@
         </div>
     </div>
     
-    <script src="app.js?v=20250310cc"></script>
+    <script src="app.js?v=20250311b"></script>
 </body>
 </html>

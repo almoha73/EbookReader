@@ -464,6 +464,11 @@ input[type="range"] {
 .font-size-controls button:hover {
     background: rgba(255,255,255,0.2);
 }
+.font-size-controls button.active, .mode-btn.active {
+    background: var(--primary-color) !important;
+    color: #fff !important;
+    border-color: var(--primary-color) !important;
+}
 
 /* empty state */
 .empty-library {
