@@ -1185,10 +1185,14 @@ function stopTTSAudio() {
 // stubs pour compatibilité
 function clearPrefetchCache() {}
 
-// ─── Highlighting via Selection API (non-destructive, no DOM mutation) ────────
+// ─── Highlighting via Overlays absolus (non destructif, reste visible sans focus) ────────
 function clearHighlight() {
     if (!iframeDoc) return;
     try {
+        const old = iframeDoc.getElementById('tts-hl-container');
+        if (old) old.remove();
+        
+        // Nettoyage de l'ancienne méthode de Selection (au cas où elle traîne)
         const sel = iframeDoc.getSelection();
         if (sel) sel.removeAllRanges();
     } catch(e) {}
@@ -1222,18 +1226,51 @@ function highlightRange(charStart, length) {
         range.setStart(startNode, startOffset);
         range.setEnd(endNode, endOffset);
 
-        const sel = iframeDoc.getSelection();
-        sel.removeAllRanges();
+        // Créer un calque conteneur pour les rectangles de surlignage
+        const container = iframeDoc.createElement('div');
+        container.id = 'tts-hl-container';
+        container.style.position = 'absolute';
+        container.style.top = '0';
+        container.style.left = '0';
+        container.style.pointerEvents = 'none'; // Laisser passer les clics au texte en dessous !
+        container.style.zIndex = '9999';
 
-        // Block the browser's auto-scroll when adding selection.
-        // We cancel the scroll on the iframe window immediately after.
+        // Obtenir toutes les boîtes du texte (couvre les textes sur plusieurs lignes)
+        const rects = range.getClientRects();
         const ifWin = iframeDoc.defaultView;
-        const sx = ifWin.scrollX, sy = ifWin.scrollY;
-        sel.addRange(range);
-        ifWin.scrollTo(sx, sy);
+        
+        for (const rect of Array.from(rects)) {
+            const m = iframeDoc.createElement('div');
+            m.style.position = 'absolute';
+            m.style.left = (rect.left + ifWin.scrollX) + 'px';
+            m.style.top = (rect.top + ifWin.scrollY) + 'px';
+            m.style.width = rect.width + 'px';
+            m.style.height = rect.height + 'px';
+            
+            // Apparence du surlignage :
+            const isDark = (document.body.dataset.theme === 'dark' || currentTheme === 'dark');
+            m.style.backgroundColor = isDark ? '#FFE033' : '#FFD900';
+            m.style.opacity = isDark ? '0.4' : '0.35'; // Assez transparent pour voir le texte
+            m.style.borderRadius = '3px';
+            // Un tout petit peu de marge pour envelopper le texte
+            m.style.padding = '1px 2px';
+            m.style.transform = 'translate(-2px, -1px)';
+            
+            container.appendChild(m);
+        }
+        
+        // Ajouter à l'iframe
+        iframeDoc.documentElement.appendChild(container);
+        activeMarkEls.push(container);
 
-        // No rect-based page detection needed: sentences[] now only contains
-        // the current visible page, so page turns happen naturally when idx >= sentences.length.
+        // Faire défiler automatiquement l'iframe vers la phrase si elle sort de l'écran (seulement en bas)
+        const firstRect = rects[0];
+        if (firstRect) {
+            const bottom = firstRect.bottom;
+            if (bottom > ifWin.innerHeight) {
+                ifWin.scrollBy({ top: bottom - ifWin.innerHeight + 50, behavior: 'smooth' });
+            }
+        }
     } catch(e) {
         console.error('Highlight error:', e);
     }
