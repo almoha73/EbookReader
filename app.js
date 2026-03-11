@@ -1110,11 +1110,8 @@ async function playTTSAudio(idx, text, rate) {
 
     const t200 = encodeURIComponent(text.trim().substring(0, 200));
     const random = Math.floor(Math.random() * 100000);
-    
-    // Serveurs proxy Node.js locaux : 
-    const serverUrl = window.location.origin.includes('localhost') || window.location.protocol === 'http:' 
-        ? `${window.location.origin}/api/tts` 
-        : `http://localhost:3000/api/tts`; // Fallback au cas où
+    // Appelle le point d'accès relatif (marche sur le Node local ET sur Vercel serverless)
+    const serverUrl = '/api/tts';
     
     const urls = [
         `${serverUrl}?text=${t200}&cb=${random}`
