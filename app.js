@@ -760,16 +760,19 @@ function startBackgroundSession() {
         console.warn('Session audio de fond WebAudio impossible:', e);
     }
 
-    // Watchdog: if synth stops talking while we expect it to be reading, restart.
-    // Do NOT fire if a page turn is pending (there's naturally silence during page load).
+    // Watchdog: recheck every 2s if audio is still playing.
+    // In Google TTS / WebAudio mode, synth.speaking is always false, so we check
+    // lastSpeakTime + activeVoiceNode instead.
     clearInterval(silentWatchdog);
     silentWatchdog = setInterval(() => {
-        if (isPlaying && !isPaused && !pendingAutoRead && !synth.speaking && !synth.pending
-            && Date.now() - lastSpeakTime > 3000) {
-            console.warn('⚠ Watchdog: synthèse vocale stoppée de manière inattendue. Relance...');
-            if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
-            // Check if HTML5 audio was suspended
-            if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(()=>{});
+        if (!isPlaying || isPaused || pendingAutoRead) return;
+        // Silence silentAudio if it stopped
+        if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(()=>{});
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+        // Audio mort = ni WebAudio en cours, ni synth en cours, depuis plus de 4s
+        const audioIsDead = !activeVoiceNode && !synth.speaking && !synth.pending;
+        if (audioIsDead && Date.now() - lastSpeakTime > 4000) {
+            console.warn('⚠ Watchdog: audio mort (WebAudio + SpeechSynth). Relance depuis phrase', sentenceIdx);
             readSentence(sentenceIdx);
         }
     }, 2000);
@@ -840,14 +843,15 @@ document.addEventListener('visibilitychange', () => {
                 // Relancer l'audio silencieux si l'OS l'a mis en veille
                 if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
                 if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(() => {});
-                // Relancer le TTS uniquement s'il s'est vraiment arrêté
-                if (!synth.speaking && !synth.pending) {
-                    console.log('📱 TTS arrêté par l\'OS — relance depuis phrase', sentenceIdx);
+                // Mode Google TTS (WebAudio) : relancer si activeVoiceNode est null ET synth silencieux
+                const audioIsDead = !activeVoiceNode && !synth.speaking && !synth.pending;
+                if (audioIsDead) {
+                    console.log('📱 Audio mort détecté au rallumage — relance depuis phrase', sentenceIdx);
                     readSentence(sentenceIdx);
                 } else if (synth.paused) {
                     synth.resume();
                 }
-            }, 300);
+            }, 500); // 500ms pour laisser l'OS réactiver le réseau
         }
     }
     if ('mediaSession' in navigator && isPlaying) {
@@ -1088,7 +1092,7 @@ function readSentence(idx) {
     const rate = parseFloat(rateSelect.value);
 
     // Fonction de lecture par Web Audio API (survit à l'extinction de l'écran grâce à silent_1h.mp3 + cors proxy)
-    const playGoogleTTS = async () => {
+    const playGoogleTTS = async (retryCount = 0) => {
         // Bloquer la nouvelle phrase si on a fait "Pause" pendant le chargement
         if (!isPlaying || isPaused) return;
 
@@ -1097,9 +1101,15 @@ function readSentence(idx) {
         const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(textChunk)}&tl=${langCode}&client=tw-ob`;
         const proxyUrl = `https://cors.eu.org/${ttsUrl}`;
         
+        // AbortController avec timeout : si le réseau est bloqué (écran éteint),
+        // on annule le fetch après 8s et on relance la phrase (plutôt que rester bloqué indéfiniment)
+        const aborter = new AbortController();
+        const fetchTimeout = setTimeout(() => aborter.abort(), 8000);
+        
         try {
-            const res = await fetch(proxyUrl);
-            if (!res.ok) throw new Error('Proxy HTTP error');
+            const res = await fetch(proxyUrl, { signal: aborter.signal });
+            clearTimeout(fetchTimeout);
+            if (!res.ok) throw new Error('Proxy HTTP ' + res.status);
             const arrayBuf = await res.arrayBuffer();
             
             if (isPaused || !isPlaying) return; // User paused during network request
@@ -1125,15 +1135,28 @@ function readSentence(idx) {
                 if (isPlaying && !isPaused) readSentence(idx + 1);
             };
             
+            lastSpeakTime = Date.now(); // Met à jour juste avant de lancer
             activeVoiceNode.start(0);
         } catch(e) {
+            clearTimeout(fetchTimeout);
+            if (!isPlaying || isPaused) return; // Paused/stopped during request, ignore
+            
+            // Si le fetch a timeout (écran éteint → réseau bloqué), on retente dans 2s
+            if (e.name === 'AbortError' && retryCount < 5) {
+                console.warn(`[TTS] Fetch timeout (écran éteint?), retry ${retryCount + 1}/5 dans 2s...`);
+                lastSpeakTime = Date.now(); // Evite que le watchdog ne tire pendant le délai
+                setTimeout(() => { if (isPlaying && !isPaused) playGoogleTTS(retryCount + 1); }, 2000);
+                return;
+            }
+            
             console.warn('[TTS] Echec WebAudio/GoogleTTS, fallback SpeechSynthesis:', e);
-            // Fallback: SpeechSynthesis (marche écran allumé, coupe si écran éteint)
+            // Fallback: SpeechSynthesis (moins robuste écran éteint, mais mieux que rien)
             if (!voicesReady) populateVoiceList();
             const utt = new SpeechSynthesisUtterance(s.text);
             if (voices[vIdx]) utt.voice = voices[vIdx];
             utt.rate = rate;
             utt.lang = lang;
+            utt.onstart = () => { lastSpeakTime = Date.now(); };
             utt.onend = () => { if (isPlaying && !isPaused) readSentence(idx + 1); };
             utt.onerror = (err) => {
                 if (err.error === 'canceled' || err.error === 'interrupted') return;
