@@ -658,14 +658,16 @@ function applyAppearance(layoutChanged = false) {
                 // On essaie de fabriquer un CFI direct vers le noeud du texte avant de tout casser
                 const s = sentences[sentenceIdx];
                 let targetNode = null;
+                let nodeOffset = 0;
                 for (let tn of textNodes) {
                     if (s.charStart >= tn.start && s.charStart < tn.end) {
                         targetNode = tn.node;
+                        nodeOffset = s.charStart - tn.start;
                         break;
                     }
                 }
-                if (targetNode) {
-                    preciseCfiToRestore = currentBook.rendition.location.start.cfi.split('!')[0] + '!' + currentBook.epubcfi.generateCfiFromNode(targetNode, s.charStart);
+                if (targetNode && currentBook.epubcfi && currentBook.epubcfi.generateCfiFromNode) {
+                    preciseCfiToRestore = currentBook.rendition.location.start.cfi.split('!')[0] + '!' + currentBook.epubcfi.generateCfiFromNode(targetNode, nodeOffset);
                 }
             } catch (e) { console.warn("Impossible de calculer la CFI précise", e); }
         }
