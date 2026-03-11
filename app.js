@@ -564,9 +564,6 @@ function applyAppearance() {
             font-size: ${basePx}px !important;
             background: ${bgColor} !important;
             color: ${textColor} !important;
-            margin: 0 !important;
-            padding: 0 !important;
-            box-sizing: border-box !important;
         } 
         body * { 
             font-size: inherit !important;
