@@ -8,7 +8,6 @@ const titleElem     = document.getElementById('current-book-title');
 const prevBtn       = document.getElementById('prev-page');
 const nextBtn       = document.getElementById('next-page');
 const backBtn       = document.getElementById('back-to-library');
-const voiceSelect   = document.getElementById('voice-select');
 const playPauseBtn  = document.getElementById('play-pause-btn');
 const settingsBtn   = document.getElementById('settings-btn');
 const settingsPanel  = document.getElementById('settings-panel');
@@ -32,57 +31,10 @@ if (fontSizeDisplayEl) fontSizeDisplayEl.textContent = fontSize + '%';
 
 let currentTheme = localStorage.getItem('reader_theme') || 'light';
 
-// TTS — Web Speech API Native
-const synth = window.speechSynthesis;
-let voices = [];
-let selectedVoice = null;
-
-function populateVoiceList() {
-    voices = synth.getVoices().filter(v => v.lang.startsWith('fr') || v.lang.startsWith('en'));
-    voiceSelect.innerHTML = '';
-    
-    // Sort French voices first
-    voices.sort((a, b) => {
-        if (a.lang.startsWith('fr') && !b.lang.startsWith('fr')) return -1;
-        if (!a.lang.startsWith('fr') && b.lang.startsWith('fr')) return 1;
-        return a.name.localeCompare(b.name);
-    });
-
-    const savedVoice = localStorage.getItem('reader_voice');
-    
-    for (const voice of voices) {
-        const option = document.createElement('option');
-        option.textContent = voice.name + ' (' + voice.lang + ')';
-        if (voice.default) option.textContent += ' — Défaut';
-        option.value = voice.name;
-        voiceSelect.appendChild(option);
-    }
-    
-    // Select saved voice if valid
-    const match = Array.from(voiceSelect.options).find(o => o.value === savedVoice);
-    if (match) {
-        match.selected = true;
-        selectedVoice = voices.find(v => v.name === match.value);
-    } else {
-        selectedVoice = voices[0];
-    }
-}
-
-if (speechSynthesis.onvoiceschanged !== undefined) {
-    speechSynthesis.onvoiceschanged = populateVoiceList;
-}
-
-voiceSelect.onchange = () => {
-    localStorage.setItem('reader_voice', voiceSelect.value);
-    selectedVoice = voices.find(v => v.name === voiceSelect.value) || voices[0];
-    if (isPlaying && !isPaused) {
-        synth.cancel();
-        readSentence(sentenceIdx); // Restart current sentence with new voice
-    }
-};
-
-// Also call populate initially in case voices are already loaded
-populateVoiceList();
+// TTS — Google TTS uniquement via WebAudio (SpeechSynthesis/Acapela supprimé)
+const globalTTSAudio = new Audio();
+globalTTSAudio.referrerPolicy = 'no-referrer';
+globalTTSAudio.preload = 'auto';
 
 let isPlaying  = false;
 let pendingAutoRead = false;
@@ -661,7 +613,7 @@ function startPlaying() {
     setPlayIcon('pause');
     // Unlock audio on real user gesture
     globalTTSAudio.src = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAA==';
-    synth.resume();
+    globalTTSAudio.play().catch(()=>{});
     requestWakeLock();  // Keep screen on during reading
     startBackgroundSession();
     startPageReading();
@@ -689,7 +641,8 @@ function pausePlaying() {
     // Garder l'élément audio en vie — juste pause().
     // Si on le détruisait (stopTTSAudio), la reprise depuis la notification
     // demanderait un nouveau téléchargement réseau, bloqué par Android (autoplay policy).
-    synth.pause();
+    globalTTSAudio.onended = null;
+    globalTTSAudio.pause();
     clearHighlight();
     setPlayIcon('play');
     releaseWakeLock();
@@ -697,18 +650,31 @@ function pausePlaying() {
 }
 
 function resumePlaying() {
+    isPlaying = true;
     isPaused = false;
+    lastSpeakTime = Date.now();
+
+    // Lancer le play le plus tôt possible de façon synchrone pour conserver 
+    // l'autorisation "Utilisateur" (user gesture) accordée par le bouton Play de la notification.
+    if (!globalTTSAudio.ended && globalTTSAudio.src) {
+        globalTTSAudio.play().catch(err => {
+            console.warn('[resume] play() échoué:', err.message);
+            // Si le navigateur a vidé le cache audio en pause, forcer une nouvelle requête
+            readSentence(sentenceIdx);
+        });
+        globalTTSAudio.onended = () => {
+            lastSpeakTime = Date.now();
+            if (isPlaying && !isPaused) readSentence(sentenceIdx + 1);
+        };
+    } else {
+        readSentence(sentenceIdx);
+    }
+
     setPlayIcon('pause');
     requestWakeLock();
     if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
-
-    if (synth.paused) {
-        synth.resume();
-        lastSpeakTime = Date.now();
-    } else if (!synth.speaking) {
-        readSentence(sentenceIdx);
-    }
 }
+
 
 
 function stopReading() {
@@ -803,7 +769,7 @@ function startBackgroundSession() {
         if (!isPlaying || isPaused || pendingAutoRead) return;
         if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(() => {});
         // Relancer si plus aucun audio TTS ne joue depuis 5s
-        if (!synth.speaking && !synth.paused && Date.now() - lastSpeakTime > 5000) {
+        if (globalTTSAudio.paused && Date.now() - lastSpeakTime > 5000) {
             showTtsStatus('⏳ Réveil audio...'); console.warn('Watchdog');
             readSentence(sentenceIdx);
         }
@@ -851,10 +817,14 @@ function setupMediaSession() {
         if (isPlaying && !isPaused) pausePlaying();
     });
     navigator.mediaSession.setActionHandler('nexttrack', () => {
-        stopReading(); if (rendition) rendition.next();
+        if (!isPlaying || !rendition) return;
+        pendingAutoRead = true; // Continuer la lecture à la prochaine page
+        rendition.next();
     });
     navigator.mediaSession.setActionHandler('previoustrack', () => {
-        stopReading(); if (rendition) rendition.prev();
+        if (!isPlaying || !rendition) return;
+        pendingAutoRead = true;
+        rendition.prev();
     });
 
     console.log('MediaSession configurée - Contrôles sur écran de verrouillage actifs');
@@ -870,7 +840,7 @@ document.addEventListener('visibilitychange', () => {
         if (isPlaying && !isPaused) {
             setTimeout(() => {
                 if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(() => {});
-                if (!synth.speaking && !synth.paused) {
+                if (globalTTSAudio.paused) {
                     console.log('📱 Audio mort au rallumage — relance phrase', sentenceIdx);
                     readSentence(sentenceIdx);
                 }
@@ -1106,59 +1076,107 @@ function readSentence(idx) {
     // Highlight the sentence in the iframe DOM
     highlightRange(s.charStart, s.text.length);
 
-    const lang = 'fr-FR'; 
+    const lang = 'fr-FR'; // Google TTS langue fixée au français
     const rate = parseFloat(rateSelect.value);
 
-    // ─── Web Speech API Native ──────────────────
-
+    // ─── Google TTS via <audio> HTML5 — SANS proxy, SANS CORS ──────────────────
+    // new Audio(url) ne subit pas de restriction CORS, contrairement à fetch().
+    // C'est la méthode la plus fiable pour bypasser Acapela et les proxies cassés.
     playTTSAudio(idx, s.text, rate);
 } // end readSentence
 
 
-// ─── Moteur TTS : Web Speech native ────────────
+// ─── Moteur TTS : Google Translate avec 1 seul lecteur persistant ────────────
+//
+// Un unique `Audio` (globalTTSAudio) est instancié au chargement et débloqué au 1er play.
+// Cela résout les problèmes d'Autoplay Policy d'Android qui bloquent
+// la création dynamique d'éléments <audio> asynchrones, et permet
+// de contourner l'attente infinie.
+//
+let ttsFailCount = 0;
 
-function playTTSAudio(idx, text, rate) {
+async function playTTSAudio(idx, text, rate) {
     if (!isPlaying || isPaused) return;
 
-    synth.cancel();
+    // Reset du lecteur commun pour la nouvelle phrase
+    globalTTSAudio.pause();
+    globalTTSAudio.onended = null;
+    globalTTSAudio.onerror = null;
+    globalTTSAudio.playbackRate = Math.min(Math.max(rate, 0.5), 2.0);
 
-    const utterThis = new SpeechSynthesisUtterance(text);
-    if (selectedVoice) {
-        utterThis.voice = selectedVoice;
-    }
-    utterThis.rate = Math.min(Math.max(rate, 0.5), 2.0);
+    const t200 = encodeURIComponent(text.trim().substring(0, 200));
+    const random = Math.floor(Math.random() * 100000);
     
-    // We sometimes need to force pitch/volume to avoid default bugs
-    utterThis.pitch = 1.0;
-    utterThis.volume = 1.0;
+    // Serveurs proxy Node.js locaux : 
+    const serverUrl = window.location.origin.includes('localhost') || window.location.protocol === 'http:' 
+        ? `${window.location.origin}/api/tts` 
+        : `http://localhost:3000/api/tts`; // Fallback au cas où
+    
+    const urls = [
+        `${serverUrl}?text=${t200}&cb=${random}`
+    ];
 
-    utterThis.onend = (e) => {
-        // Only trigger next phrase if it was genuinely finished,
-        // rather than interrupted by synth.cancel()
-        lastSpeakTime = Date.now();
-        if (isPlaying && !isPaused) {
-            readSentence(idx + 1);
+    let currentUrlIdx = 0;
+
+    const tryNext = () => {
+        if (!isPlaying || isPaused) return;
+        if (currentUrlIdx >= urls.length) {
+            ttsFailCount++;
+            console.error('[TTS] Échec total phrase', idx);
+            if (ttsFailCount >= 3) {
+                showTtsStatus('❌ Connexion Google TTS bloquée ou instable. Cliquez sur PAUSE puis PLAY pour relancer.');
+                pausePlaying();
+            } else {
+                showTtsStatus('⏳ Erreur réseau, nouvelle tentative...');
+                setTimeout(() => { if (isPlaying && !isPaused) readSentence(idx); }, 3000);
+            }
+            return;
         }
+
+        const url = urls[currentUrlIdx++];
+        console.log(`[TTS] Essai ${currentUrlIdx}: ${url.substring(0, 80)}...`);
+        
+        // Timeout de sécurité pour cette URL
+        const loadTimer = setTimeout(() => {
+            if (globalTTSAudio.src === url && (globalTTSAudio.paused || globalTTSAudio.readyState < 2)) {
+                console.warn('[TTS] Timeout URL — essai suivant');
+                tryNext();
+            }
+        }, 7000);
+
+        globalTTSAudio.onended = () => {
+            clearTimeout(loadTimer);
+            ttsFailCount = 0;
+            lastSpeakTime = Date.now();
+            showTtsStatus('');
+            if (isPlaying && !isPaused) readSentence(idx + 1);
+        };
+
+        globalTTSAudio.onerror = () => {
+            clearTimeout(loadTimer);
+            console.warn('[TTS] Erreur URL — essai suivant');
+            tryNext();
+        };
+
+        globalTTSAudio.src = url;
+        globalTTSAudio.play().catch(e => {
+            // Autoplay peut être bloqué si le geste utilisateur est trop vieux
+            console.warn('[TTS] play() bloqué ou erreur:', e.message);
+            // On ne tryNext pas forcément ici, on laisse le onerror ou timeout agir
+        });
     };
 
-    utterThis.onerror = (e) => {
-        console.warn('SpeechSynthesisError:', e.error);
-        lastSpeakTime = Date.now();
-        if (isPlaying && !isPaused && e.error !== 'interrupted' && e.error !== 'canceled') {
-            readSentence(idx + 1);
-        }
-    };
-
-    lastSpeakTime = Date.now();
-    showTtsStatus(''); // clear errors
-    synth.speak(utterThis);
+    tryNext();
 }
 
 // Arrête l'audio TTS
 function stopTTSAudio() {
-    synth.cancel();
+    globalTTSAudio.pause();
+    globalTTSAudio.onended = null;
+    globalTTSAudio.onerror = null;
 }
 
+// stubs pour compatibilité
 function clearPrefetchCache() {}
 
 // ─── Highlighting via Selection API (non-destructive, no DOM mutation) ────────
