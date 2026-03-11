@@ -31,6 +31,13 @@ if (fontSizeDisplayEl) fontSizeDisplayEl.textContent = fontSize + '%';
 
 let currentTheme = localStorage.getItem('reader_theme') || 'light';
 
+// Init TTS rate
+const savedRate = localStorage.getItem('reader_playbackRate') || '1.0';
+if (rateSelect) {
+    rateSelect.value = savedRate;
+    if (rateValue) rateValue.textContent = parseFloat(savedRate).toFixed(1) + 'x';
+}
+
 // TTS — Google TTS uniquement via WebAudio (SpeechSynthesis/Acapela supprimé)
 const globalTTSAudio = new Audio();
 globalTTSAudio.referrerPolicy = 'no-referrer';
@@ -591,7 +598,9 @@ function applyAppearance() {
 }
 
 rateSelect.oninput = (e) => {
-    rateValue.textContent = parseFloat(e.target.value).toFixed(1) + 'x';
+    const val = parseFloat(e.target.value).toFixed(1);
+    rateValue.textContent = val + 'x';
+    localStorage.setItem('reader_playbackRate', val);
     if (isPlaying && !isPaused) {
         stopTTSAudio();
         readSentence(sentenceIdx);
