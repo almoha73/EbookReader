@@ -200,7 +200,9 @@ function getLocalState() {
 }
 
 // ─── Fusion cloud → local ─────────────────────────────────────────────────────
-function mergeCloud(cloudState) {
+// forceJump=true : saut immédiat (reconnexion explicite par l'utilisateur)
+// forceJump=false : mise à jour silencieuse du localStorage uniquement (background)
+function mergeCloud(cloudState, forceJump = false) {
     if (!cloudState || !cloudState.books) return false;
 
     let updated = false;
@@ -217,8 +219,11 @@ function mergeCloud(cloudState) {
             }
             updated = true;
 
-            // Si ce livre est actuellement ouvert, on y va directement
-            if (typeof window.currentBookId !== 'undefined' && window.currentBookId === bookId) {
+            // On ne saute vers la bonne page QUE si l'utilisateur l'a demandé
+            // (ex: reconnexion au Drive) ET qu'il ne lit pas en ce moment.
+            const userIsReading = typeof window.isPlaying !== 'undefined' && window.isPlaying;
+            const isCurrentBook = typeof window.currentBookId !== 'undefined' && window.currentBookId === bookId;
+            if (forceJump && isCurrentBook && !userIsReading) {
                 if (typeof window.rendition !== 'undefined' && window.rendition && cloudBook.cfi) {
                     console.log('[Sync] Livre ouvert → saut vers', cloudBook.cfi);
                     window.rendition.display(cloudBook.cfi);
@@ -237,9 +242,9 @@ async function doSync(notifyIfUpdated = false) {
 
         // 1. Télécharger l'état cloud
         const cloudState = await downloadState(fileId);
-        let cloudUpdated = false;
         if (cloudState) {
-            cloudUpdated = mergeCloud(cloudState);
+            // forceJump=notifyIfUpdated : sauter vers la bonne page seulement si l'utilisateur a cliqué le bouton
+            mergeCloud(cloudState, notifyIfUpdated);
         }
 
         // 2. Pousser l'état local (potentiellement enrichi)
