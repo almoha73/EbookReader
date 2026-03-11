@@ -1086,12 +1086,6 @@ function readSentence(idx) {
 //
 let ttsFailCount = 0;
 
-&tl=fr&client=gtx`,
-        `https://translate.googleapis.com/translate_tts?ie=UTF-8&q=${t200}&tl=fr&client=gtx`,
-        `https://translate.google.com.vn/translate_tts?ie=UTF-8&q=${t200}&tl=fr&client=tw-ob`
-    ];
-}
-
 async function playTTSAudio(idx, text, rate) {
     if (!isPlaying || isPaused) return;
 
