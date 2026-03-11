@@ -51,7 +51,7 @@ let activeMarkEls    = [];  // <mark> elements currently in DOM
 // ─── Background audio state (keep alive when screen is off) ─────────────────────
 let audioCtx        = null;
 let silentSource    = null;
-let activeVoiceNode = null;
+
 let silentAudioEl   = null;
 let silentWatchdog  = null;
 let lastSpeakTime   = 0;
@@ -1049,7 +1049,7 @@ function readSentence(idx) {
 
     // FIN DE PAGE (mais même chapitre) : audio continu synchronisé
     // On tourne VISUELLEMENT, mais l'audio s'enchaîne de façon continue dans le code
-    // L'OS Android maintiendra le flux audio puisque le SpeechSynthesis ne s'arrête pas !
+    // L'OS Android maintiendra le flux audio grâce au lecteur persistant et au silentAudioEl !
     if (idx > window.currentLastVisibleSentence) {
         if (isPlaying && !isPaused) {
             // Empêche de relancer rendition.next() en boucle avant que 'relocated' ne mette à jour la limite
