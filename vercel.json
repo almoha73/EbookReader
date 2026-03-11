@@ -2,12 +2,15 @@
   "version": 2,
   "builds": [
     {
-      "src": "index.html",
-      "use": "@vercel/static"
-    },
-    {
       "src": "api/tts.js",
       "use": "@vercel/node"
+    },
+    {
+      "src": "**/*",
+      "use": "@vercel/static",
+      "config": {
+        "exclude": ["api/**", ".vercelignore", "vercel.json", ".git/**"]
+      }
     }
   ],
   "routes": [
