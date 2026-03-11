@@ -35,7 +35,6 @@ let currentTheme = localStorage.getItem('reader_theme') || 'light';
 const globalTTSAudio = new Audio();
 globalTTSAudio.referrerPolicy = 'no-referrer';
 globalTTSAudio.preload = 'auto';
-globalTTSAudio.crossOrigin = 'anonymous';
 
 let isPlaying  = false;
 let pendingAutoRead = false;
