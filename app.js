@@ -588,12 +588,8 @@ function applyAppearance() {
 
 rateSelect.oninput = (e) => {
     rateValue.textContent = parseFloat(e.target.value).toFixed(1) + 'x';
-    // Relancer la lecture avec le nouveau taux si en cours
     if (isPlaying && !isPaused) {
-        if (activeVoiceNode) {
-            try { activeVoiceNode.onended = null; activeVoiceNode.stop(); } catch(e_) {}
-            activeVoiceNode = null;
-        }
+        stopTTSAudio();
         readSentence(sentenceIdx);
     }
 };
@@ -638,12 +634,20 @@ function pausePlaying() {
     stopSpeaking();
     setPlayIcon('play');
     releaseWakeLock();
+    // Mettre à jour la notification Android (sinon le bouton ▶️ ne fonctionne pas)
+    if ('mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = 'paused';
+    }
 }
 
 function resumePlaying() {
     isPaused = false;
     setPlayIcon('pause');
     requestWakeLock();
+    // Remettre en lecture et informer Android
+    if ('mediaSession' in navigator) {
+        navigator.mediaSession.playbackState = 'playing';
+    }
     readSentence(sentenceIdx);
 }
 
