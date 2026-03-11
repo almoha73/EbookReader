@@ -637,7 +637,6 @@ function showTtsStatus(msg) {
 
 function pausePlaying() {
     isPaused = true;
-    // Garder l'élément audio en vie — juste pause().
     globalTTSAudio.onended = null;
     globalTTSAudio.pause();
 
@@ -768,17 +767,19 @@ function startBackgroundSession() {
     } catch(e) { console.warn('WebAudio background:', e); }
 
     // ─ Couche 3 : Watchdog de relance complète ───────────────────────────────
-    // Si malgré tout l'audio est complètement mort, on relance readSentence.
+    // Le silentAudioEl doit battre en permanence pour que la notification Android
+    // reste affichée même entre deux phrases (quand globalTTSAudio est en pause).
     clearInterval(silentWatchdog);
     silentWatchdog = setInterval(() => {
         if (!isPlaying || isPaused || pendingAutoRead) return;
+        // Maintenir silentAudioEl en vie à tout moment (battement de cœur de la notification)
         if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(() => {});
-        // Relancer si plus aucun audio TTS ne joue depuis 5s
-        if (globalTTSAudio.paused && Date.now() - lastSpeakTime > 5000) {
+        // Relancer si plus aucun audio TTS ne joue depuis 4s
+        if (globalTTSAudio.paused && Date.now() - lastSpeakTime > 4000) {
             showTtsStatus('⏳ Réveil audio...'); console.warn('Watchdog');
             readSentence(sentenceIdx);
         }
-    }, 2000);
+    }, 1500);
 
     setupMediaSession();
 }
