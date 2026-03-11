@@ -49,22 +49,20 @@ let iframeDoc        = null;
 let activeMarkEls    = [];  // <mark> elements currently in DOM
 
 // ─── Background audio state (keep alive when screen is off) ─────────────────────
-let audioCtx       = null;
-let silentSource   = null;
-let activeVoiceNode = null;
-let silentAudioEl  = null;  // HTML5 audio element
-let silentWatchdog = null;  // interval that restarts speech if OS kills it
-let lastSpeakTime  = 0;     // debounce: avoids watchdog firing between sentences
-let wakeLock       = null;  // Screen Wake Lock to prevent screen from turning off
-let wasPlayingBeforeHidden = false; // track if we need to resume after screen on
+let audioCtx        = null;
+let silentSource    = null;
+let activeVoiceNode = null;    // WebAudio BufferSource (Google TTS fallback uniquement)
+let silentAudioEl   = null;    // HTML5 <audio> loopé (garde la session média vivante)
+let silentWatchdog  = null;    // setInterval principal (rebounce + relance)
+let synthResumeTimer = null;   // setInterval agressif : force synth.resume() toutes les 500 ms
+let lastSpeakTime   = 0;
+let wakeLock        = null;
+let wasPlayingBeforeHidden = false;
 
-// ─── Audio prefetch cache ──────────────────────────────────────────────────────
-// Key strategy: download + decode the next PREFETCH_AHEAD sentences WHILE the
-// current one is playing (screen is still on). When the screen turns off,
-// the AudioBuffers are already in RAM — zero network needed, just audioNode.start().
-const PREFETCH_AHEAD = 6;   // sentences to keep decoded ahead
-let prefetchCache = new Map();  // sentenceIdx → AudioBuffer (decoded)
-let prefetchInFlight = new Set(); // indices currently being fetched
+// ─── Audio prefetch cache (Google TTS — utilisé seulement si voix non-locale) ───────
+const PREFETCH_AHEAD = 6;
+let prefetchCache   = new Map();   // sentenceIdx → AudioBuffer décodé
+let prefetchInFlight = new Set();
 
 
 // ─── Voice loading ────────────────────────────────────────────────────────────
@@ -722,19 +720,20 @@ function setPlayIcon(icon) {
     else playPauseBtn.classList.remove('playing');
 }
 
-// ─── Background / screen-off audio session ────────────────────────────────
-// Strategy:
-//  1. Play a nearly-inaudible noise loop through Web Audio API.
-//     Pure silence (zeros) is detected as "no audio" by Android and the tab
-//     gets suspended. A tiny non-zero signal keeps the audio focus alive.
-//  2. A watchdog timer checks every 2 s if speech synthesis is still running.
-//     If it stopped unexpectedly (killed by OS), it restarts the sentence.
+// ─── Background / screen-off audio session ──────────────────────────────────
+//
+// Stratégie en 3 couches :
+//  1. silentAudioEl (silent_1h.mp3 loop) → maintient la SESSION MÉDIA vivante.
+//     C'est ce qui empêche Android de suspendre complètement le JS.
+//  2. synthResumeTimer (setInterval 500ms) → appelle synth.resume() de force.
+//     Android Chrome PAUSE speechSynthesis automatiquement quand l'écran s'éteint.
+//     Ce timer combat ça : il tourne parce que couche 1 garde le JS actif.
+//  3. silentWatchdog (setInterval 2s) → détecte si l'audio est complètement mort
+//     et relance readSentence si besoin.
+//
 function startBackgroundSession() {
-    // 1. HTML5 Audio tag approach (Strongest MediaSession binder for Android/iOS)
+    // ─ Couche 1 : HTML5 Audio silencieux (garde la session média active) ─────
     if (!silentAudioEl) {
-        // Fichier MP3 silencieux très long (1 heure) placé dans le DOM.
-        // Android le traite comme un vrai flux média long type podcast ou radio,
-        // ce qui maintient le processus JS actif même écran éteint.
         silentAudioEl = document.getElementById('silent-audio');
         if (!silentAudioEl) {
             silentAudioEl = new Audio('silent_1h.mp3');
@@ -742,20 +741,18 @@ function startBackgroundSession() {
             silentAudioEl.src = 'silent_1h.mp3';
         }
         silentAudioEl.loop = true;
-        silentAudioEl.volume = 0.001; // Quasi-inaudible mais réel
+        silentAudioEl.volume = 0.001; // Quasi-inaudible mais non nul (important !)
     }
-    silentAudioEl.play().catch(e => console.warn('Erreur lecture silentAudioEl:', e));
+    silentAudioEl.play().catch(e => console.warn('silentAudioEl:', e));
 
-    // 2. Web Audio API approach (Fallback + keeping audio focus strongly)
+    // ─ Web Audio API : bruit blanc infime (double protection) ───────────────
     try {
         if (!audioCtx || audioCtx.state === 'closed') {
             audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             const sr = audioCtx.sampleRate;
             const buffer = audioCtx.createBuffer(1, sr, sr);
             const data = buffer.getChannelData(0);
-            for (let i = 0; i < data.length; i++) {
-                data[i] = (Math.random() * 2 - 1) * 0.0001;
-            }
+            for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.0001;
             silentSource = audioCtx.createBufferSource();
             silentSource.buffer = buffer;
             silentSource.loop = true;
@@ -764,23 +761,33 @@ function startBackgroundSession() {
         } else if (audioCtx.state === 'suspended') {
             audioCtx.resume();
         }
-    } catch(e) {
-        console.warn('Session audio de fond WebAudio impossible:', e);
-    }
+    } catch(e) { console.warn('WebAudio background:', e); }
 
-    // Watchdog: recheck every 2s if audio is still playing.
-    // In Google TTS / WebAudio mode, synth.speaking is always false, so we check
-    // lastSpeakTime + activeVoiceNode instead.
+    // ─ Couche 2 : Timer agressif synth.resume() ─────────────────────────────
+    // Android Chrome met speechSynthesis en PAUSE automatiquement écran éteint.
+    // Ce timer tourne grâce au silentAudioEl et force la reprise immédiate.
+    clearInterval(synthResumeTimer);
+    synthResumeTimer = setInterval(() => {
+        if (!isPlaying || isPaused) return;
+        if (synth.paused) {
+            console.log('[resume-timer] synth.paused détecté — resume() forcé');
+            synth.resume();
+        }
+        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+        if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(() => {});
+    }, 500);
+
+    // ─ Couche 3 : Watchdog de relance complète ───────────────────────────────
+    // Si malgré tout l'audio est complètement mort, on relance readSentence.
     clearInterval(silentWatchdog);
     silentWatchdog = setInterval(() => {
         if (!isPlaying || isPaused || pendingAutoRead) return;
-        // Silence silentAudio if it stopped
-        if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(()=>{});
+        if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(() => {});
         if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
-        // Audio mort = ni WebAudio en cours, ni synth en cours, depuis plus de 4s
-        const audioIsDead = !activeVoiceNode && !synth.speaking && !synth.pending;
-        if (audioIsDead && Date.now() - lastSpeakTime > 4000) {
-            console.warn('⚠ Watchdog: audio mort (WebAudio + SpeechSynth). Relance depuis phrase', sentenceIdx);
+        // Mort = plus rien ne joue depuis 5s (ni SpeechSynth actif/en pause, ni WebAudio)
+        const audioIsDead = !activeVoiceNode && !synth.speaking && !synth.pending && !synth.paused;
+        if (audioIsDead && Date.now() - lastSpeakTime > 5000) {
+            console.warn('⚠ Watchdog: audio complètement mort. Relance depuis phrase', sentenceIdx);
             readSentence(sentenceIdx);
         }
     }, 2000);
@@ -788,9 +795,12 @@ function startBackgroundSession() {
     setupMediaSession();
 }
 
+
 function stopBackgroundSession() {
     clearInterval(silentWatchdog);
+    clearInterval(synthResumeTimer);
     silentWatchdog = null;
+    synthResumeTimer = null;
     try {
         if (silentAudioEl) silentAudioEl.pause();
         silentSource?.stop();
@@ -798,7 +808,6 @@ function stopBackgroundSession() {
     } catch(e) {}
     audioCtx = null;
     silentSource = null;
-
     if ('mediaSession' in navigator) {
         navigator.mediaSession.playbackState = 'none';
     }
@@ -1091,27 +1100,51 @@ function readSentence(idx) {
     // Highlight the sentence in the iframe DOM
     highlightRange(s.charStart, s.text.length);
 
-    // Ensure voices are loaded
     if (!voicesReady) populateVoiceList();
 
     const vIdx = parseInt(voiceSelect.value, 10);
-    const lang = voices[vIdx] ? voices[vIdx].lang : 'fr-FR';
+    const selectedVoice = voices[vIdx] || null;
+    const lang = selectedVoice ? selectedVoice.lang : 'fr-FR';
     const rate = parseFloat(rateSelect.value);
 
-    // Kick off background prefetch of the next PREFETCH_AHEAD sentences
-    // (fire-and-forget — we don't await this)
-    prefetchSentencesAhead(idx, lang);
+    // ────────────────────────────────────────────────────────────────────
+    // STRATÉGIE : SpeechSynthesis avec la voix sélectionnée (Acapela, etc.)
+    // ────────────────────────────────────────────────────────────────────
+    // SpeechSynthesis est le seul moyen d'utiliser des voix locales (Acapela, etc.).
+    // Pour survivre à l'écran éteint sur Android, le synthResumeTimer (couche 2 du
+    // startBackgroundSession) appelle synth.resume() toutes les 500ms, ce qui
+    // combat le pause automatique qu'Android impose à speechSynthesis.
+    // --
+    // On lance d'abord SpeechSynthesis. Si la voix est une voix réseau (online-only)
+    // et que ça échoue, on bascule sur Google TTS via WebAudio (prefetch cache).
+    const utt = new SpeechSynthesisUtterance(s.text);
+    if (selectedVoice) utt.voice = selectedVoice;
+    utt.rate = rate;
+    utt.lang = lang;
+    utt.onstart = () => { lastSpeakTime = Date.now(); };
+    utt.onend = () => {
+        if (isPlaying && !isPaused) readSentence(idx + 1);
+    };
+    utt.onerror = (err) => {
+        console.warn('[SpeechSynth] erré sur phrase', idx, err.error);
+        if (err.error === 'canceled' || err.error === 'interrupted') return;
+        // Tenter le fallback Google TTS si SpeechSynth échoue
+        if (isPlaying && !isPaused) {
+            fetchAndPlaySentence(idx, s, lang, rate);
+        }
+    };
 
-    // Play: use pre-decoded buffer if available, else fetch now
-    const buffer = prefetchCache.get(idx);
-    if (buffer) {
-        console.log(`[TTS] ✅ Cache hit phrase ${idx} — lecture immédiate`);
-        playCachedBuffer(buffer, idx, rate);
-    } else {
-        console.log(`[TTS] ⏳ Cache miss phrase ${idx} — fetch en cours...`);
-        fetchAndPlaySentence(idx, s, lang, rate);
-    }
-}
+    // Annuler toute utterance en cours avant de parler
+    synth.cancel();
+    // Petit délai pour laisser cancel() prendre effet (bug Chrome faméux)
+    setTimeout(() => {
+        if (isPlaying && !isPaused) {
+            synth.speak(utt);
+            // Lancer le prefetch Google TTS en arrière-plan comme filet de sécurité
+            prefetchSentencesAhead(idx, lang);
+        }
+    }, 50);
+} // end readSentence
 
 // ─── Fetch + decode une phrase et met en cache ─────────────────────────────────
 async function fetchAudioBuffer(s, lang) {
