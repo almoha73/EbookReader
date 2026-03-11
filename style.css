@@ -235,15 +235,14 @@ body {
     /* Leave space for nav buttons on each side on desktop */
     width: calc(100% - 120px);
     max-width: 860px;
-    margin: 2rem auto 0.5rem auto; /* Plus aéré sous la nav ! */
+    margin: 1rem auto; /* Marge externe propre */
     position: relative;
     overflow: hidden; /* CRITICAL: prevents epubjs columns from spilling/shifting visually */
     background: #ffffff;
     color: #000000;
     border-radius: 12px;
-    margin-bottom: 1.5rem;
     box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-    padding: 0 20px 40px 20px; /* Marges droites, gauches et en bas pour le composant de num. pages */
+    padding: 30px 40px 50px 40px; /* Marges INTERNES (texte repoussé des bords blancs) */
     transition: background-color 0.3s ease, color 0.3s ease;
 }
 
@@ -265,14 +264,13 @@ body {
 @media (max-width: 768px) {
     /* Full-width viewer — swipe replaces nav buttons */
     .viewer-container {
-        width: 100vw;
+        width: 100%; /* Important: utiliser 100% et pas 100vw pour éviter la coupure asymétrique à droite */
         max-width: 100%;
-        margin: 2.5rem 0 0 0; /* Espace très aéré entre la nav et le texte en haut (mobile) */
+        margin: 0; /* Pas de marge externe, sinon la barrre de navigation noire semble gonfler */
         border-radius: 0;
         box-shadow: none;
-        margin-bottom: 0;
-        overflow: hidden; /* Ensures horizontal scroll is strictly blocked */
-        padding: 0 20px 50px 20px; /* Marge gauche=20, droite=20, bas=50 (pour l'ovale des pages) */
+        overflow: hidden;
+        padding: 40px 16px 50px 16px; /* Haut=40 (aération), Gauche/Droite=16, Bas=50 */
     }
 
     /* Hide ← → nav buttons: user swipes instead */
