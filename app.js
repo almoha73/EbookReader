@@ -836,24 +836,62 @@ function setupMediaSession() {
 }
 
 // Watchdog de reprise au rallumage de l'écran.
-// NE PAS couper le TTS à l'extinction : laisser l'OS décider (il peut le garder vivant
-// grâce au silentAudioEl + AudioContext). Relancer seulement si le navigateur l'a mis en pause.
-document.addEventListener('visibilitychange', () => {
+// NE PAS couper le TTS à l'extinction : laisser l'OS décider.
+// Relancer seulement si le navigateur l'a mis en pause ou rechargé la page.
+document.addEventListener('visibilitychange', async () => {
     if (document.hidden) {
-        console.log('📱 Passage en arrière-plan — Google TTS WebAudio continu');
-    } else {
-        if (isPlaying && !isPaused) {
-            setTimeout(() => {
-                if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(() => {});
-                if (globalTTSAudio.paused) {
-                    console.log('📱 Audio mort au rallumage — relance phrase', sentenceIdx);
-                    readSentence(sentenceIdx);
-                }
-            }, 500);
-        }
+        console.log('📱 Passage en arrière-plan — audio continu');
+        return;
     }
+
+    // Ralentir un peu pour laisser le navigateur finir de réactiver l'iframe
+    await new Promise(r => setTimeout(r, 800));
+
     if ('mediaSession' in navigator && isPlaying) {
         navigator.mediaSession.playbackState = isPaused ? 'paused' : 'playing';
+    }
+
+    if (!isPlaying || isPaused) return;
+
+    // 1. Réactiver le flux de fond silencieux si Android l'a coupé
+    if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(() => {});
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+
+    // 2. Vérifier si l'iframe est toujours valide (Android recharge parfois la page)
+    let iframeStillValid = false;
+    try {
+        const contentsArr = rendition?.getContents?.();
+        if (contentsArr && contentsArr.length) {
+            const doc = contentsArr[0].document;
+            // Vérifier que le DOM de l'iframe a du contenu (n'a pas été rechargé vide)
+            iframeStillValid = !!(doc && doc.body && doc.body.innerText.trim().length > 0);
+        }
+    } catch(e) {
+        iframeStillValid = false;
+    }
+
+    if (!iframeStillValid) {
+        // L'iframe a été détruite → naviguer vers la position CFI sauvegardée
+        console.log('📱 Iframe invalide au rallumage — navigation vers CFI sauvegardée');
+        const savedCfi = localStorage.getItem(`cfi_${currentBookId}`);
+        if (savedCfi && rendition) {
+            pendingAutoRead = true; // Relancer la lecture quand 'relocated' arrive
+            await rendition.display(savedCfi);
+        }
+        return;
+    }
+
+    // 3. Iframe valide mais audio mort → relancer la phrase courante
+    if (globalTTSAudio.paused) {
+        console.log('📱 Audio mort au rallumage — relance phrase', sentenceIdx);
+
+        // Réappliquer le surlignage sur la phrase courante (il peut avoir disparu)
+        if (sentences[sentenceIdx]) {
+            const s = sentences[sentenceIdx];
+            highlightRange(s.charStart, s.text.length);
+        }
+
+        readSentence(sentenceIdx);
     }
 });
 
