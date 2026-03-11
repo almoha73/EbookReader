@@ -463,6 +463,31 @@ input[type="range"] {
 .font-size-controls button:hover {
     background: rgba(255,255,255,0.2);
 }
+.font-size-controls button:active {
+    background: rgba(88, 166, 255, 0.5);
+}
+
+.color-picker-group {
+    display: flex;
+    justify-content: space-between;
+    padding-top: 5px;
+}
+.color-btn {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    border: 3px solid transparent;
+    cursor: pointer;
+    transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+.color-btn:hover {
+    transform: scale(1.1);
+}
+.color-btn.active {
+    border-color: #ffffff;
+    transform: scale(1.15);
+    box-shadow: 0 0 10px rgba(255, 255, 255, 0.4);
+}
 .font-size-controls button.active, .mode-btn.active {
     background: var(--primary-color) !important;
     color: #fff !important;

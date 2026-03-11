@@ -30,12 +30,36 @@ const fontSizeDisplayEl = document.getElementById('font-size-display');
 if (fontSizeDisplayEl) fontSizeDisplayEl.textContent = fontSize + '%';
 
 let currentTheme = localStorage.getItem('reader_theme') || 'light';
+let currentHighlightColor = localStorage.getItem('reader_highlightColor') || '#FFE033';
 
 // Init TTS rate
 const savedRate = localStorage.getItem('reader_playbackRate') || '1.0';
 if (rateSelect) {
     rateSelect.value = savedRate;
     if (rateValue) rateValue.textContent = parseFloat(savedRate).toFixed(1) + 'x';
+}
+
+// Init Highlight Color Picker
+const colorBtns = document.querySelectorAll('.color-btn');
+if (colorBtns.length > 0) {
+    colorBtns.forEach(btn => {
+        if (btn.dataset.color === currentHighlightColor) {
+            colorBtns.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+        }
+        btn.addEventListener('click', (e) => {
+            colorBtns.forEach(b => b.classList.remove('active'));
+            e.target.classList.add('active');
+            currentHighlightColor = e.target.dataset.color;
+            localStorage.setItem('reader_highlightColor', currentHighlightColor);
+            
+            // Refresh in-progress highlight if it's currently on screen
+            if (rendition && sentences.length > 0 && sentenceIdx >= 0 && sentenceIdx < sentences.length) {
+                clearHighlight();
+                highlightRange(sentences[sentenceIdx].charStart, sentences[sentenceIdx].text.length);
+            }
+        });
+    });
 }
 
 // TTS — Google TTS uniquement via WebAudio (SpeechSynthesis/Acapela supprimé)
@@ -1333,8 +1357,8 @@ function highlightRange(charStart, length) {
             
             // Apparence du surlignage :
             const isDark = (document.body.dataset.theme === 'dark' || currentTheme === 'dark');
-            m.style.backgroundColor = isDark ? '#FFE033' : '#FFD900';
-            m.style.opacity = isDark ? '0.4' : '0.35'; // Assez transparent pour voir le texte
+            m.style.backgroundColor = currentHighlightColor;
+            m.style.opacity = isDark ? '0.45' : '0.35'; // Assez transparent pour voir le texte
             m.style.borderRadius = '3px';
             // Un tout petit peu de marge pour envelopper le texte
             m.style.padding = '1px 2px';
