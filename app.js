@@ -67,27 +67,44 @@ let prefetchInFlight = new Set();
 
 // ─── Voice loading ────────────────────────────────────────────────────────────
 function populateVoiceList() {
-    voices = synth.getVoices();
-    if (!voices.length) return;
+    // On garde uniquement les voix françaises (fr-FR, fr-BE, fr-CA…)
+    const allVoices = synth.getVoices();
+    if (!allVoices.length) return;
     voicesReady = true;
+
+    // Filtrer voix françaises ; si aucune, afficher toutes (fallback)
+    const frVoices = allVoices.filter(v => v.lang.toLowerCase().startsWith('fr'));
+    voices = frVoices.length ? frVoices : allVoices;
+
+    // Ne reconstruire la liste que si elle a changé (évite d'écraser le choix utilisateur en cours)
+    const currentName = voices[parseInt(voiceSelect.value, 10)]?.name;
     voiceSelect.innerHTML = voices.map((v, i) =>
         `<option value="${i}">${v.name} (${v.lang})</option>`
     ).join('');
-    // Restore saved voice by NAME (index can vary between sessions)
+
+    // 1. Essayer de restaurer le choix de l'utilisateur s'il en a fait un
     const savedVoiceName = localStorage.getItem('reader_voice_name');
     if (savedVoiceName) {
         const idx = voices.findIndex(v => v.name === savedVoiceName);
         if (idx >= 0) { voiceSelect.value = idx; return; }
+        // Le nom sauvegardé n'existe plus (voix désinstallée) → effacer
+        localStorage.removeItem('reader_voice_name');
     }
-    // Fall back to system default
+    // 2. Restaurer le choix qui était sélectionné avant le rechargement de la liste
+    if (currentName) {
+        const idx = voices.findIndex(v => v.name === currentName);
+        if (idx >= 0) { voiceSelect.value = idx; return; }
+    }
+    // 3. Prendre la voix par défaut du système si elle est française
     const defIdx = voices.findIndex(v => v.default);
-    if (defIdx >= 0) voiceSelect.value = defIdx;
+    voiceSelect.value = defIdx >= 0 ? defIdx : 0;
 }
 
 // Call immediately AND on event (Chrome fires the event, Firefox already has them)
-console.log('EbookReader v20250310-b loaded');
+console.log('EbookReader v20250311 loaded');
 populateVoiceList();
 speechSynthesis.onvoiceschanged = () => { populateVoiceList(); };
+
 
 // ─── Init ────────────────────────────────────────────────────────────────────
 async function init() {
