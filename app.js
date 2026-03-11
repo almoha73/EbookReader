@@ -13,7 +13,6 @@ const settingsBtn   = document.getElementById('settings-btn');
 const settingsPanel  = document.getElementById('settings-panel');
 const progressFill   = document.getElementById('progress-fill');
 const pageInfo       = document.getElementById('page-info');
-const voiceSelect   = document.getElementById('voice-select');
 const rateSelect    = document.getElementById('rate-select');
 const rateValue     = document.getElementById('rate-value');
 const decreaseFontBtn = document.getElementById('decrease-font');
@@ -32,16 +31,9 @@ if (fontSizeDisplayEl) fontSizeDisplayEl.textContent = fontSize + '%';
 
 let currentTheme = localStorage.getItem('reader_theme') || 'light';
 
-// TTS state
-const synth = window.speechSynthesis;
-let voices  = [];
-let voicesReady = false;
-
-// Mode voix : 'google' = Google TTS réseau (bypass Android), 'local' = SpeechSynthesis système
-let voiceMode = localStorage.getItem('reader_voice_mode') || 'google';
-
+// TTS — Google TTS uniquement via WebAudio (SpeechSynthesis/Acapela supprimé)
 let isPlaying  = false;
-let pendingAutoRead = false;  // set when TTS finishes a page → triggers read on next render
+let pendingAutoRead = false;
 let isPaused   = false;
 
 let sentences        = [];  // [{text, charStart}]
@@ -54,100 +46,19 @@ let activeMarkEls    = [];  // <mark> elements currently in DOM
 // ─── Background audio state (keep alive when screen is off) ─────────────────────
 let audioCtx        = null;
 let silentSource    = null;
-let activeVoiceNode = null;    // WebAudio BufferSource (Google TTS fallback uniquement)
-let silentAudioEl   = null;    // HTML5 <audio> loopé (garde la session média vivante)
-let silentWatchdog  = null;    // setInterval principal (rebounce + relance)
-let synthResumeTimer = null;   // setInterval agressif : force synth.resume() toutes les 500 ms
+let activeVoiceNode = null;
+let silentAudioEl   = null;
+let silentWatchdog  = null;
 let lastSpeakTime   = 0;
 let wakeLock        = null;
-let wasPlayingBeforeHidden = false;
 
-// ─── Audio prefetch cache (Google TTS — utilisé seulement si voix non-locale) ───────
+// ─── Audio prefetch cache ─────────────────────────────────────────────────────────────
 const PREFETCH_AHEAD = 6;
-let prefetchCache   = new Map();   // sentenceIdx → AudioBuffer décodé
+let prefetchCache   = new Map();
 let prefetchInFlight = new Set();
 
 
-// ─── Voice loading ────────────────────────────────────────────────────────────
-
-// Incrémenter ce numéro force la suppression de l'ancienne voix sauvegardée
-// pour tous les utilisateurs au prochain chargement de la page.
-const VOICE_PREF_VER = '3';
-if (localStorage.getItem('voice_pref_ver') !== VOICE_PREF_VER) {
-    localStorage.removeItem('reader_voice_name');
-    localStorage.setItem('voice_pref_ver', VOICE_PREF_VER);
-    console.log('[voice] Préférence de voix réinitialisée (nouvelle version)');
-}
-
-function populateVoiceList() {
-    // On garde uniquement les voix françaises (fr-FR, fr-BE, fr-CA…)
-    const allVoices = synth.getVoices();
-    if (!allVoices.length) return;
-    voicesReady = true;
-
-    // Filtrer voix françaises ; si aucune, afficher toutes (fallback)
-    const frVoices = allVoices.filter(v => v.lang.toLowerCase().startsWith('fr'));
-    voices = frVoices.length ? frVoices : allVoices;
-
-    // Mémoriser le choix en cours avant de reconstruire la liste
-    const currentName = voices[parseInt(voiceSelect.value, 10)]?.name;
-    voiceSelect.innerHTML = voices.map((v, i) =>
-        `<option value="${i}">${v.name} (${v.lang})</option>`
-    ).join('');
-
-    // 1. Restaurer le choix explicite de l'utilisateur (sauvegardé dans localStorage)
-    const savedVoiceName = localStorage.getItem('reader_voice_name');
-    if (savedVoiceName) {
-        const idx = voices.findIndex(v => v.name === savedVoiceName);
-        if (idx >= 0) { voiceSelect.value = idx; return; }
-        // Le nom n'existe plus (voix désinstallée) → effacer
-        localStorage.removeItem('reader_voice_name');
-    }
-    // 2. Restaurer le choix qui était actif avant le rechargement de la liste
-    if (currentName) {
-        const idx = voices.findIndex(v => v.name === currentName);
-        if (idx >= 0) { voiceSelect.value = idx; return; }
-    }
-    // 3. Voix par défaut du système (si française) ou première de la liste
-    const defIdx = voices.findIndex(v => v.default);
-    voiceSelect.value = defIdx >= 0 ? defIdx : 0;
-}
-
-
-// Call immediately AND on event (Chrome fires the event, Firefox already has them)
-console.log('EbookReader v20250311b loaded');
-populateVoiceList();
-speechSynthesis.onvoiceschanged = () => { populateVoiceList(); };
-
-// ─── Toggle Mode Voix (Google TTS réseau vs Voix locale) ─────────────────────
-const modeGoogleBtn   = document.getElementById('mode-google');
-const modeLocalBtn    = document.getElementById('mode-local');
-const localVoiceGroup = document.getElementById('local-voice-group');
-const voiceModeHint   = document.getElementById('voice-mode-hint');
-
-function applyVoiceMode(mode) {
-    voiceMode = mode;
-    localStorage.setItem('reader_voice_mode', mode);
-    if (mode === 'google') {
-        modeGoogleBtn?.classList.add('active');
-        modeLocalBtn?.classList.remove('active');
-        if (localVoiceGroup) localVoiceGroup.style.display = 'none';
-        if (voiceModeHint) voiceModeHint.textContent = '✅ Voix Google — bypass Acapela, fonctionne écran éteint';
-    } else {
-        modeLocalBtn?.classList.add('active');
-        modeGoogleBtn?.classList.remove('active');
-        if (localVoiceGroup) localVoiceGroup.style.display = '';
-        if (voiceModeHint) voiceModeHint.textContent = '⚠️ Utilise le moteur Android (= Acapela si c\'est votre moteur système)';
-    }
-    console.log('[voiceMode] →', mode);
-}
-
-// Init UI selon le mode sauvegardé
-applyVoiceMode(voiceMode);
-
-modeGoogleBtn?.addEventListener('click', () => applyVoiceMode('google'));
-modeLocalBtn?.addEventListener('click',  () => applyVoiceMode('local'));
-
+console.log("EbookReader v20250311c — Google TTS only");
 
 // ─── Init ────────────────────────────────────────────────────────────────────
 async function init() {
@@ -402,14 +313,12 @@ function handleTapToRead(doc, clientX, clientY) {
         isPaused = false;
         setPlayIcon('pause');
         if (clickedCharIndex >= 0 && sentences.length) {
-            synth.cancel();
             sentenceIdx = findSentenceIdx(clickedCharIndex);
         }
         readSentence(sentenceIdx);
     } else {
         // Already playing — jump to tapped sentence
         if (clickedCharIndex >= 0 && sentences.length) {
-            synth.cancel();
             sentenceIdx = findSentenceIdx(clickedCharIndex);
             setTimeout(() => readSentence(sentenceIdx), 80);
         }
@@ -498,7 +407,6 @@ function injectHighlightStyleAndClickListener() {
                 setPlayIcon('pause');
                 if (clickedCharIndex >= 0 && sentences.length) {
                     let targetIdx = findSentenceIdx(clickedCharIndex);
-                    synth.cancel();
                     sentenceIdx = targetIdx;
                 }
                 readSentence(sentenceIdx);
@@ -506,7 +414,6 @@ function injectHighlightStyleAndClickListener() {
                 // Already playing — jump to clicked sentence
                 if (clickedCharIndex >= 0 && sentences.length) {
                     let targetIdx = findSentenceIdx(clickedCharIndex);
-                    synth.cancel();
                     sentenceIdx = targetIdx;
                     setTimeout(() => readSentence(sentenceIdx), 80);
                 }
@@ -680,24 +587,16 @@ function applyAppearance() {
 }
 
 rateSelect.oninput = (e) => {
-    rateValue.textContent = e.target.value + 'x';
-    if (isPlaying && !isPaused) rebuildAndResume();
+    rateValue.textContent = parseFloat(e.target.value).toFixed(1) + 'x';
+    // Relancer la lecture avec le nouveau taux si en cours
+    if (isPlaying && !isPaused) {
+        if (activeVoiceNode) {
+            try { activeVoiceNode.onended = null; activeVoiceNode.stop(); } catch(e_) {}
+            activeVoiceNode = null;
+        }
+        readSentence(sentenceIdx);
+    }
 };
-
-voiceSelect.onchange = () => {
-    // Persist voice by name so it survives page reload
-    const v = voices[parseInt(voiceSelect.value, 10)];
-    if (v) localStorage.setItem('reader_voice_name', v.name);
-    if (isPlaying && !isPaused) rebuildAndResume();
-};
-
-// Reconstruit l'état de lecture complet si on change de voix ou de vitesse
-async function rebuildAndResume() {
-    synth.cancel();
-    clearHighlight();
-    await initChapterReadingState();
-    readSentence(sentenceIdx);
-}
 
 // ─── Play / Pause ─────────────────────────────────────────────────────────────
 playPauseBtn.onclick = () => {
@@ -783,9 +682,8 @@ function releaseWakeLock() {
 // (visibilitychange is handled below, after setupMediaSession)
 
 function stopSpeaking() {
-    synth.cancel();
     if (activeVoiceNode) {
-        try { activeVoiceNode.stop(); } catch(e) {}
+        try { activeVoiceNode.onended = null; activeVoiceNode.stop(); } catch(e) {}
         activeVoiceNode = null;
     }
     clearHighlight();
@@ -802,9 +700,6 @@ function setPlayIcon(icon) {
 // Stratégie en 3 couches :
 //  1. silentAudioEl (silent_1h.mp3 loop) → maintient la SESSION MÉDIA vivante.
 //     C'est ce qui empêche Android de suspendre complètement le JS.
-//  2. synthResumeTimer (setInterval 500ms) → appelle synth.resume() de force.
-//     Android Chrome PAUSE speechSynthesis automatiquement quand l'écran s'éteint.
-//     Ce timer combat ça : il tourne parce que couche 1 garde le JS actif.
 //  3. silentWatchdog (setInterval 2s) → détecte si l'audio est complètement mort
 //     et relance readSentence si besoin.
 //
@@ -840,20 +735,6 @@ function startBackgroundSession() {
         }
     } catch(e) { console.warn('WebAudio background:', e); }
 
-    // ─ Couche 2 : Timer agressif synth.resume() ─────────────────────────────
-    // Android Chrome met speechSynthesis en PAUSE automatiquement écran éteint.
-    // Ce timer tourne grâce au silentAudioEl et force la reprise immédiate.
-    clearInterval(synthResumeTimer);
-    synthResumeTimer = setInterval(() => {
-        if (!isPlaying || isPaused) return;
-        if (synth.paused) {
-            console.log('[resume-timer] synth.paused détecté — resume() forcé');
-            synth.resume();
-        }
-        if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
-        if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(() => {});
-    }, 500);
-
     // ─ Couche 3 : Watchdog de relance complète ───────────────────────────────
     // Si malgré tout l'audio est complètement mort, on relance readSentence.
     clearInterval(silentWatchdog);
@@ -862,7 +743,7 @@ function startBackgroundSession() {
         if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(() => {});
         if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
         // Mort = plus rien ne joue depuis 5s (ni SpeechSynth actif/en pause, ni WebAudio)
-        const audioIsDead = !activeVoiceNode && !synth.speaking && !synth.pending && !synth.paused;
+        const audioIsDead = !activeVoiceNode;
         if (audioIsDead && Date.now() - lastSpeakTime > 5000) {
             console.warn('⚠ Watchdog: audio complètement mort. Relance depuis phrase', sentenceIdx);
             readSentence(sentenceIdx);
@@ -875,9 +756,7 @@ function startBackgroundSession() {
 
 function stopBackgroundSession() {
     clearInterval(silentWatchdog);
-    clearInterval(synthResumeTimer);
     silentWatchdog = null;
-    synthResumeTimer = null;
     try {
         if (silentAudioEl) silentAudioEl.pause();
         silentSource?.stop();
@@ -927,25 +806,18 @@ function setupMediaSession() {
 // grâce au silentAudioEl + AudioContext). Relancer seulement si le navigateur l'a mis en pause.
 document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
-        // Écran éteint : ON NE COUPE PAS. On laisse AudioContext + silentAudioEl maintenir la session.
-        console.log('📱 Passage en arrière-plan — lecture TTS laissée intacte');
+        console.log('📱 Passage en arrière-plan — Google TTS WebAudio continu');
     } else {
-        // Écran rallumé : récupérer l'AudioContext et relancer le TTS s'il a été tué
         if (isPlaying && !isPaused) {
-            console.log('📱 Retour au premier plan — vérification du TTS');
             setTimeout(() => {
-                // Relancer l'audio silencieux si l'OS l'a mis en veille
                 if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
                 if (silentAudioEl && silentAudioEl.paused) silentAudioEl.play().catch(() => {});
-                // Mode Google TTS (WebAudio) : relancer si activeVoiceNode est null ET synth silencieux
-                const audioIsDead = !activeVoiceNode && !synth.speaking && !synth.pending;
-                if (audioIsDead) {
-                    console.log('📱 Audio mort détecté au rallumage — relance depuis phrase', sentenceIdx);
+                // Relancer si plus aucun noeud WebAudio ne joue
+                if (!activeVoiceNode) {
+                    console.log('📱 Audio mort au rallumage — relance phrase', sentenceIdx);
                     readSentence(sentenceIdx);
-                } else if (synth.paused) {
-                    synth.resume();
                 }
-            }, 500); // 500ms pour laisser l'OS réactiver le réseau
+            }, 500);
         }
     }
     if ('mediaSession' in navigator && isPlaying) {
@@ -1177,49 +1049,19 @@ function readSentence(idx) {
     // Highlight the sentence in the iframe DOM
     highlightRange(s.charStart, s.text.length);
 
-    if (!voicesReady) populateVoiceList();
-
-    const vIdx = parseInt(voiceSelect.value, 10);
-    const selectedVoice = voices[vIdx] || null;
-    const lang = selectedVoice ? selectedVoice.lang : 'fr-FR';
+    const lang = 'fr-FR'; // Google TTS langue fixée au français
     const rate = parseFloat(rateSelect.value);
 
-    // ────────────────────────────────────────────────────────────────────────
-    // DISPATCH selon le mode choisi par l'utilisateur
-    // ────────────────────────────────────────────────────────────────────────
-    if (voiceMode === 'google') {
-        // Mode Google TTS : fetch MP3 depuis Google Translate via proxy,
-        // joué via WebAudio API — bypasse COMPLÈTEMENT le système TTS Android.
-        // C'est la seule façon de ne PAS entendre Acapela si elle est moteur système.
-        // Prefetch en RAM pour survivre à l'extinction de l'écran.
-        prefetchSentencesAhead(idx, lang);
-        const cachedBuf = prefetchCache.get(idx);
-        if (cachedBuf) {
-            playCachedBuffer(cachedBuf, idx, rate);
-        } else {
-            fetchAndPlaySentence(idx, s, lang, rate);
-        }
+    // Google TTS uniquement via WebAudio — bypass complet d'Acapela et du système Android
+    prefetchSentencesAhead(idx, lang);
+    const cachedBuf = prefetchCache.get(idx);
+    if (cachedBuf) {
+        playCachedBuffer(cachedBuf, idx, rate);
     } else {
-        // Mode Voix locale : SpeechSynthesis avec la voix sélectionnée (Acapela, etc.)
-        // Le synthResumeTimer appelle synth.resume() toutes les 500ms pour survivre
-        // à la mise en pause automatique d'Android écran éteint.
-        const utt = new SpeechSynthesisUtterance(s.text);
-        if (selectedVoice) utt.voice = selectedVoice;
-        utt.rate = rate;
-        utt.lang = lang;
-        utt.onstart = () => { lastSpeakTime = Date.now(); };
-        utt.onend   = () => { if (isPlaying && !isPaused) readSentence(idx + 1); };
-        utt.onerror = (err) => {
-            if (err.error === 'canceled' || err.error === 'interrupted') return;
-            console.warn('[SpeechSynth] err phrase', idx, err.error);
-            if (isPlaying && !isPaused) readSentence(idx + 1);
-        };
-        synth.cancel();
-        setTimeout(() => {
-            if (isPlaying && !isPaused) synth.speak(utt);
-        }, 50);
+        fetchAndPlaySentence(idx, s, lang, rate);
     }
 } // end readSentence
+
 
 
 // ─── Fetch + decode une phrase via Google TTS (multi-proxy) ─────────────────
