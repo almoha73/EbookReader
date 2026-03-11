@@ -285,6 +285,12 @@ function addIframeSwipeListeners(doc) {
 
 // Find the tapped sentence in the iframe and start / redirect reading
 function handleTapToRead(doc, clientX, clientY) {
+    // Si le panneau de paramètres est ouvert, le clic sert uniquement à le fermer (pas de lecture)
+    if (!settingsPanel.classList.contains('hidden')) {
+        settingsPanel.classList.add('hidden');
+        return;
+    }
+
     let clickedCharIndex = -1;
     try {
         let range;
@@ -366,7 +372,12 @@ function injectHighlightStyleAndClickListener() {
 
         // Click-to-read: clicking on any sentence starts / redirects reading
         doc.body.addEventListener('click', (e) => {
-            settingsPanel.classList.add('hidden');
+            // Si le panneau paramètre est ouvert, on annule l'action de lecture pour se contenter de fermer le panneau
+            if (!settingsPanel.classList.contains('hidden')) {
+                settingsPanel.classList.add('hidden');
+                return;
+            }
+
             // On mobile a tap fires touchend (handled) THEN a synthetic click ~300ms later.
             // Ignore that synthetic click to avoid reading the same sentence twice.
             if (Date.now() - lastTapTime < 500) return;
