@@ -219,11 +219,12 @@ function mergeCloud(cloudState, forceJump = false) {
             }
             updated = true;
 
-            // On ne saute vers la bonne page QUE si l'utilisateur l'a demandé
-            // (ex: reconnexion au Drive) ET qu'il ne lit pas en ce moment.
+            // On saute vers la bonne page si :
+            // 1) L'utilisateur l'a forcé (bouton Cloud Sync) OU
+            // 2) L'audio n'est PAS en cours (c'est le chargement initial ou le téléphone est posé)
             const userIsReading = typeof window.isPlaying !== 'undefined' && window.isPlaying;
             const isCurrentBook = typeof window.currentBookId !== 'undefined' && window.currentBookId === bookId;
-            if (forceJump && isCurrentBook && !userIsReading) {
+            if (isCurrentBook && (!userIsReading || forceJump)) {
                 if (typeof window.rendition !== 'undefined' && window.rendition && cloudBook.cfi) {
                     console.log('[Sync] Livre ouvert → saut vers', cloudBook.cfi);
                     window.rendition.display(cloudBook.cfi);
