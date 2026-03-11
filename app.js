@@ -106,10 +106,14 @@ bookUpload.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
 
-    const id = 'book_' + Date.now();
     const arrayBuffer = await file.arrayBuffer();
     const book = ePub(arrayBuffer);
     const metadata = await book.loaded.metadata;
+
+    // ID déterministe (Le MÊME livre sur PC ou sur le téléphone aura la même "plaque d'immatriculation")
+    const rawId = (metadata.title || file.name) + '_' + (metadata.creator || file.size);
+    // On nettoie la chaîne pour éviter les problèmes de clés dans le LocalStorage
+    const id = 'book_' + btoa(encodeURIComponent(rawId)).replace(/[^a-zA-Z0-9]/g, '').substring(0, 40);
 
     // Convert cover blob URL → data URL (blob URLs die on page reload)
     let coverDataUrl = null;
