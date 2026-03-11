@@ -717,6 +717,23 @@ function startPlaying() {
     startPageReading();
 }
 
+// Affiche un message temporaire dans le page-info (statut TTS)
+let _ttsStatusTimer = null;
+function showTtsStatus(msg) {
+    if (!pageInfo) return;
+    if (!msg) {
+        // Restaurer le vrai texte de progression
+        updateProgress();
+        return;
+    }
+    pageInfo.textContent = msg;
+    clearTimeout(_ttsStatusTimer);
+    if (msg.startsWith('❌')) {
+        // Garder le message d'erreur visible 5s
+        _ttsStatusTimer = setTimeout(() => updateProgress(), 5000);
+    }
+}
+
 function pausePlaying() {
     isPaused = true;
     stopSpeaking();
@@ -1205,31 +1222,46 @@ function readSentence(idx) {
 } // end readSentence
 
 
-// ─── Fetch + decode une phrase et met en cache ─────────────────────────────────
+// ─── Fetch + decode une phrase via Google TTS (multi-proxy) ─────────────────
+// On essaie plusieurs proxies CORS en séquence — si l'un est down, on passe
+// au suivant. C'est la clé pour éviter le fallback Acapela.
+const TTS_PROXIES = [
+    url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
+    url => `https://cors.eu.org/${url}`,
+    url => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`,
+];
+
 async function fetchAudioBuffer(s, lang) {
     const langCode = lang.split('-')[0];
     const textChunk = s.text.trim().substring(0, 200);
     const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(textChunk)}&tl=${langCode}&client=tw-ob`;
-    const proxyUrl = `https://cors.eu.org/${ttsUrl}`;
 
-    const aborter = new AbortController();
-    const fetchTimeout = setTimeout(() => aborter.abort(), 12000);
-    try {
-        const res = await fetch(proxyUrl, { signal: aborter.signal });
-        clearTimeout(fetchTimeout);
-        if (!res.ok) throw new Error('HTTP ' + res.status);
-        const arrayBuf = await res.arrayBuffer();
+    let lastErr;
+    for (const makeProxy of TTS_PROXIES) {
+        const proxyUrl = makeProxy(ttsUrl);
+        const aborter = new AbortController();
+        const timeout = setTimeout(() => aborter.abort(), 10000);
+        try {
+            const res = await fetch(proxyUrl, { signal: aborter.signal });
+            clearTimeout(timeout);
+            if (!res.ok) { lastErr = new Error('HTTP ' + res.status); continue; }
+            const arrayBuf = await res.arrayBuffer();
+            if (arrayBuf.byteLength < 100) { lastErr = new Error('empty response'); continue; } // pas de vraie audio
 
-        if (!audioCtx || audioCtx.state === 'closed') {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            if (!audioCtx || audioCtx.state === 'closed') {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') await audioCtx.resume().catch(() => {});
+
+            const decoded = await audioCtx.decodeAudioData(arrayBuf);
+            return decoded; // Succès !
+        } catch(e) {
+            clearTimeout(timeout);
+            lastErr = e;
+            console.warn(`[TTS] Proxy échoué: ${proxyUrl.substring(0,40)}...`, e.message);
         }
-        if (audioCtx.state === 'suspended') await audioCtx.resume().catch(() => {});
-
-        return await audioCtx.decodeAudioData(arrayBuf);
-    } catch(e) {
-        clearTimeout(fetchTimeout);
-        throw e;
     }
+    throw lastErr || new Error('Tous les proxies ont échoué');
 }
 
 // ─── Lance le prefetch des PREFETCH_AHEAD prochaines phrases ───────────────────
@@ -1287,39 +1319,26 @@ function playCachedBuffer(buffer, idx, rate) {
     activeVoiceNode.start(0);
 }
 
-// ─── Fetch + joue une phrase (cache miss) avec fallback SpeechSynthesis ───────
+// ─── Fetch + joue une phrase (cache miss) ─────────────────────────────────────
+// En mode Google TTS, on ne tombe JAMAIS vers SpeechSynthesis (= Acapela).
+// Si tous les proxies échouent, on affiche une erreur et le watchdog relancera.
 async function fetchAndPlaySentence(idx, s, lang, rate) {
     if (!isPlaying || isPaused) return;
-    const vIdx = parseInt(voiceSelect.value, 10);
     try {
+        showTtsStatus('⏳ Connexion Google TTS...');
         const buffer = await fetchAudioBuffer(s, lang);
         if (!isPlaying || isPaused) return;
-        // Store in cache before playing (useful if we retry or jump back)
         prefetchCache.set(idx, buffer);
         prefetchInFlight.delete(idx);
+        showTtsStatus(''); // OK, plus besoin du message
         playCachedBuffer(buffer, idx, rate);
     } catch(e) {
         if (!isPlaying || isPaused) return;
-        // Si c'est un AbortError (timeout), on retente carrément readSentence
-        // Le watchdog le fera aussi, mais mieux vaut être proactif
-        if (e.name === 'AbortError') {
-            console.warn(`[TTS] Timeout fetch phrase ${idx} — le watchdog relancera`);
-            lastSpeakTime = Date.now() - 3000; // Laisser watchdog reprendre plus vite
-            return;
-        }
-        console.warn('[TTS] Fallback SpeechSynthesis pour phrase', idx, e);
-        if (!voicesReady) populateVoiceList();
-        const utt = new SpeechSynthesisUtterance(s.text);
-        if (voices[vIdx]) utt.voice = voices[vIdx];
-        utt.rate = rate;
-        utt.lang = lang;
-        utt.onstart = () => { lastSpeakTime = Date.now(); };
-        utt.onend = () => { if (isPlaying && !isPaused) readSentence(idx + 1); };
-        utt.onerror = (err) => {
-            if (err.error === 'canceled' || err.error === 'interrupted') return;
-            if (isPlaying && !isPaused) readSentence(idx + 1);
-        };
-        synth.speak(utt);
+        console.error('[TTS Google] TOUS les proxies ont échoué pour phrase', idx, e);
+        showTtsStatus('❌ Google TTS indisponible — vérifiez votre connexion');
+        // Laisser lastSpeakTime proche pour que le watchdog retente dans 5s
+        lastSpeakTime = Date.now() - 4000;
+        // Pas de fallback Acapela : on retente via le watchdog
     }
 }
 
