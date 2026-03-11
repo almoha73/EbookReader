@@ -235,7 +235,7 @@ body {
     /* Leave space for nav buttons on each side on desktop */
     width: calc(100% - 120px);
     max-width: 860px;
-    margin: 1.5rem auto 0.5rem auto;
+    margin: 2rem auto 0.5rem auto; /* Plus aéré sous la nav ! */
     position: relative;
     overflow: hidden; /* CRITICAL: prevents epubjs columns from spilling/shifting visually */
     background: #ffffff;
@@ -243,7 +243,7 @@ body {
     border-radius: 12px;
     margin-bottom: 1.5rem;
     box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-    padding: 0; /* Padding inside the iframe via JS instead */
+    padding: 0 20px 40px 20px; /* Marges droites, gauches et en bas pour le composant de num. pages */
     transition: background-color 0.3s ease, color 0.3s ease;
 }
 
@@ -267,12 +267,12 @@ body {
     .viewer-container {
         width: 100vw;
         max-width: 100%;
-        margin: 1.5rem 0 0 0; /* Espace augmenté entre la nav et le texte en haut */
+        margin: 2.5rem 0 0 0; /* Espace très aéré entre la nav et le texte en haut (mobile) */
         border-radius: 0;
         box-shadow: none;
         margin-bottom: 0;
         overflow: hidden; /* Ensures horizontal scroll is strictly blocked */
-        padding: 0; /* Let epubjs inside iframe handle padding */
+        padding: 0 20px 50px 20px; /* Marge gauche=20, droite=20, bas=50 (pour l'ovale des pages) */
     }
 
     /* Hide ← → nav buttons: user swipes instead */

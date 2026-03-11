@@ -546,7 +546,7 @@ function applyAppearance() {
             background: ${bgColor} !important;
             color: ${textColor} !important;
             margin: 0 !important;
-            padding: 10px 16px 30px 16px !important; /* Padding géré en interne ! */
+            padding: 0 !important;
             box-sizing: border-box !important;
         } 
         body * { 
