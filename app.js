@@ -1075,43 +1075,89 @@ function readSentence(idx) {
 } // end readSentence
 
 
-// ─── Google TTS via élément <audio> HTML5 (sans proxy, sans CORS) ────────────
+// ─── Moteur TTS : StreamElements (principal) + Google TTS (fallback) ──────────
 //
-// Pourquoi cette approche ?
-//  - fetch() exige que le serveur distant envoie des headers CORS → proxies nécessaires
-//  - new Audio(url) est une simple requête média → pas de CORS requis
-//  - Fonctionne directement avec l'URL Google Translate TTS
-//  - Le silentAudioEl maintient la session média → l'audio survit à l'écran éteint
+// StreamElements TTS : gratuit, sans clé API, sans proxy CORS requis.
+//   → https://api.streamelements.com/kv1/sound/fr-fr/1/TEXTE
+// Google Translate TTS : fallback si StreamElements est lent/indisponible.
+//   → https://translate.google.com/translate_tts?...
 //
-let currentTTSAudio = null;  // élément <audio> en cours de lecture
-let nextTTSAudio    = null;  // élément <audio> suivant (pré-chargé)
+// Stratégie : on essaie chaque URL avec un timeout de 5s.
+// Si toutes échouent, on saute la phrase (pas de boucle infinie).
+//
+let currentTTSAudio = null;
+let nextTTSAudio    = null;
+let ttsFailCount    = 0; // reset à 0 dès qu'une phrase réussit
 
-// URL candidates — on essaie tw-ob puis gtx si le premier échoue
-function makeTTSUrl(text, lang, client = 'tw-ob') {
-    const langCode = lang.split('-')[0];
-    const textChunk = text.trim().substring(0, 200);
-    return `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(textChunk)}&tl=${langCode}&client=${client}`;
+function buildTTSUrls(text) {
+    const t200 = encodeURIComponent(text.trim().substring(0, 200));
+    const t380 = encodeURIComponent(text.trim().substring(0, 380));
+    return [
+        // 1. StreamElements — voix Google français, fiable, sans proxy
+        `https://api.streamelements.com/kv1/sound/fr-fr/1/${t380}`,
+        // 2. Google Translate TTS client tw-ob
+        `https://translate.google.com/translate_tts?ie=UTF-8&q=${t200}&tl=fr&client=tw-ob`,
+        // 3. Google Translate TTS client gtx
+        `https://translate.google.com/translate_tts?ie=UTF-8&q=${t200}&tl=fr&client=gtx`,
+    ];
 }
 
-function makeTTSAudioEl(text, lang, client = 'tw-ob') {
-    const el = new Audio(makeTTSUrl(text, lang, client));
-    el.preload = 'auto';
-    return el;
+// Tentative de lecture d'une URL audio avec timeout
+// Retourne l'élément <audio> en lecture si succès, null sinon
+function tryAudioUrl(url, rate, timeoutMs = 5000) {
+    return new Promise((resolve) => {
+        const audio = document.createElement('audio');
+        audio.referrerPolicy = 'no-referrer';
+        audio.preload = 'auto';
+        audio.playbackRate = Math.min(Math.max(rate, 0.5), 2.0);
+        audio.src = url;
+
+        let done = false;
+        const finish = (result) => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            resolve(result);
+        };
+
+        const timer = setTimeout(() => {
+            console.warn('[TTS] Timeout 5s:', url.substring(0, 60));
+            audio.onerror = null;
+            audio.src = '';
+            finish(null);
+        }, timeoutMs);
+
+        audio.onerror = () => {
+            console.warn('[TTS] Erreur:', url.substring(0, 60));
+            finish(null);
+        };
+
+        audio.play()
+            .then(() => finish(audio))   // play() résolu = l'audio joue !
+            .catch(() => finish(null));  // autoplay bloqué ou erreur
+    });
 }
 
-// Pré-charge la phrase suivante pendant que la phrase courante joue
+// Pré-charge la phrase suivante en arrière-plan
 function prefetchNextTTS(idx) {
-    const nextIdx = idx + 1;
-    if (nextIdx < sentences.length && !nextTTSAudio) {
-        nextTTSAudio = makeTTSAudioEl(sentences[nextIdx].text, 'fr');
-        console.log(`[TTS] Prefetch phrase ${nextIdx}`);
-    }
+    if (idx + 1 >= sentences.length || nextTTSAudio) return;
+    // On pré-crée l'élément avec StreamElements uniquement
+    const text = sentences[idx + 1].text;
+    const el = document.createElement('audio');
+    el.referrerPolicy = 'no-referrer';
+    el.preload = 'auto';
+    el.src = `https://api.streamelements.com/kv1/sound/fr-fr/1/${encodeURIComponent(text.trim().substring(0, 380))}`;
+    nextTTSAudio = el;
 }
 
 async function playTTSAudio(idx, text, rate) {
     if (!isPlaying || isPaused) return;
 
-    // Arrêter ce qui joue éventuellement
+    // Utiliser le pré-chargé si c'est pour la phrase attendue, sinon ignorer
+    const preloaded = nextTTSAudio;
+    nextTTSAudio = null;
+
+    // Arrêter l'audio en cours s'il reste actif
     if (currentTTSAudio) {
         currentTTSAudio.onended = null;
         currentTTSAudio.onerror = null;
@@ -1120,73 +1166,72 @@ async function playTTSAudio(idx, text, rate) {
         currentTTSAudio = null;
     }
 
-    // Utiliser le pré-chargé si dispo, sinon en créer un nouveau
-    const audio = nextTTSAudio || makeTTSAudioEl(text, 'fr');
-    nextTTSAudio = null;
-    currentTTSAudio = audio;
+    let audio = null;
 
-    audio.playbackRate = Math.min(Math.max(rate, 0.5), 2.0);
+    // Essayer d'abord l'élément pré-chargé (StreamElements)
+    if (preloaded && preloaded.readyState >= 2) { // HAVE_CURRENT_DATA
+        try {
+            await preloaded.play();
+            audio = preloaded;
+        } catch(e) { /* ignorer */ }
+    }
 
-    // Timeout de sécurité : si Google ne répond pas en 8s, on passe à la phrase suivante
-    let loadTimeout = setTimeout(() => {
-        if (currentTTSAudio === audio && (audio.readyState < 2)) {
-            console.warn('[TTS] Timeout chargement phrase', idx, '— phrase suivante');
-            showTtsStatus('⏭ Google TTS lent — phrase suivante...');
-            audio.onended = null;
-            audio.onerror = null;
-            audio.pause();
-            currentTTSAudio = null;
-            if (isPlaying && !isPaused) readSentence(idx + 1);
+    // Sinon tenter les URLs en séquence
+    if (!audio) {
+        const urls = buildTTSUrls(text);
+        for (const url of urls) {
+            if (!isPlaying || isPaused) return;
+            audio = await tryAudioUrl(url, rate);
+            if (audio) break;
         }
-    }, 8000);
+    }
+
+    if (!isPlaying || isPaused) {
+        if (audio) { audio.pause(); audio.src = ''; }
+        return;
+    }
+
+    if (!audio) {
+        // Tous les services ont échoué pour cette phrase
+        ttsFailCount++;
+        console.error('[TTS] Échec total phrase', idx, `(${ttsFailCount} consécutifs)`);
+        if (ttsFailCount >= 3) {
+            showTtsStatus('❌ TTS indisponible — vérifiez votre connexion internet');
+            // Arrêter la lecture plutôt que boucler indéfiniment
+            pausePlaying();
+        } else {
+            showTtsStatus('⏭ TTS indisponible — phrase suivante...');
+            setTimeout(() => {
+                showTtsStatus('');
+                if (isPlaying && !isPaused) readSentence(idx + 1);
+            }, 1500);
+        }
+        return;
+    }
+
+    // Succès !
+    ttsFailCount = 0;
+    currentTTSAudio = audio;
+    audio.playbackRate = Math.min(Math.max(rate, 0.5), 2.0);
+    lastSpeakTime = Date.now();
+    showTtsStatus('');
 
     audio.onended = () => {
-        clearTimeout(loadTimeout);
         lastSpeakTime = Date.now();
         currentTTSAudio = null;
         if (isPlaying && !isPaused) readSentence(idx + 1);
     };
-
-    audio.onerror = (e) => {
-        clearTimeout(loadTimeout);
-        console.warn('[TTS] Erreur phrase', idx, '— essai client=gtx');
-        // Tenter avec client=gtx comme fallback
-        const fallback = makeTTSAudioEl(text, 'fr', 'gtx');
-        fallback.playbackRate = audio.playbackRate;
-        currentTTSAudio = fallback;
-        fallback.onended = () => {
-            lastSpeakTime = Date.now();
-            currentTTSAudio = null;
-            if (isPlaying && !isPaused) readSentence(idx + 1);
-        };
-        fallback.onerror = () => {
-            console.error('[TTS] Échec tw-ob ET gtx pour phrase', idx);
-            showTtsStatus('❌ Google TTS indisponible');
-            currentTTSAudio = null;
-            lastSpeakTime = Date.now() - 4000;
-        };
-        fallback.play().catch(() => {
-            showTtsStatus('❌ Google TTS indisponible');
-            currentTTSAudio = null;
-            lastSpeakTime = Date.now() - 4000;
-        });
+    audio.onerror = () => {
+        currentTTSAudio = null;
+        lastSpeakTime = Date.now();
+        if (isPlaying && !isPaused) readSentence(idx + 1);
     };
 
-    try {
-        showTtsStatus('');
-        await audio.play();
-        lastSpeakTime = Date.now();
-        // Pré-charger la phrase d'après pendant que celle-ci joue
-        prefetchNextTTS(idx, 'fr');
-    } catch(err) {
-        console.error('[TTS audio] Impossible de jouer phrase', idx, err.message);
-        showTtsStatus('❌ Google TTS indisponible');
-        currentTTSAudio = null;
-        lastSpeakTime = Date.now() - 4000;
-    }
+    // Pré-charger la prochaine phrase pendant que celle-ci joue
+    prefetchNextTTS(idx);
 }
 
-// Compat : appelé par stopSpeaking() + watchdog
+// Arrête l'audio TTS en cours
 function stopTTSAudio() {
     if (currentTTSAudio) {
         currentTTSAudio.onended = null;
@@ -1198,8 +1243,9 @@ function stopTTSAudio() {
     nextTTSAudio = null;
 }
 
-// stubs pour compatibilité (plus utilisés mais appelés depuis clearPrefetchCache etc.)
+// stubs pour compatibilité
 function clearPrefetchCache() { nextTTSAudio = null; }
+
 
 
 // ─── Highlighting via Selection API (non-destructive, no DOM mutation) ────────
