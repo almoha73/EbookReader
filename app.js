@@ -1400,4 +1400,36 @@ function highlightRange(charStart, length) {
     }
 }
 
+// ─── Cloud Sync Live Updater ──────────────────────────────────────────────────
+window.applyCloudUpdate = (cloudState) => {
+    if (!currentBookId) return;
+    
+    // Si nous sommes dans le livre et que la position a changé
+    const bookState = cloudState.books[currentBookId];
+    if (bookState && bookState.cfi) {
+        console.log("CloudUpdate: Application de la position de lecture distante:", bookState.cfi);
+        
+        // Stopper la lecture en cours si l'appli était en train de lire
+        if (isPlaying) {
+            stopReading();
+        }
+        
+        // Mettre à jour l'interface avec un indicateur
+        if (pageInfo) pageInfo.textContent = "Saut vers la position Cloud...";
+        
+        // Se rendre à la nouvelle position
+        rendition.display(bookState.cfi);
+        
+        // Mettre à jour l'index si disponible
+        if (bookState.sentenceIdx !== undefined) {
+            sentenceIdx = bookState.sentenceIdx;
+        }
+    }
+    
+    // Si nous sommes dans la bibliothèque, on recharge simplement l'UI
+    if (libraryView.classList.contains('active')) {
+        loadLibrary();
+    }
+};
+
 init();
