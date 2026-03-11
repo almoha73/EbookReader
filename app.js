@@ -1090,12 +1090,40 @@ function updateVisualBoundariesOnly() {
 
 function splitSentences(text) {
     const result = [];
-    // Split on . ! ? followed by space/newline or end, keeping delimiter
+    // Découpage principal sur la ponctuation forte et sauts de ligne
     const re = /[^.!?\n]+[.!?\n]*/g;
     let m;
     while ((m = re.exec(text)) !== null) {
-        if (m[0].trim().length > 1) {
-            result.push({ text: m[0], charStart: m.index });
+        let snippet = m[0];
+        let offset = m.index;
+        
+        // Sous-découpage pour Google TTS (limite ~200 chars), on sécurise à 160.
+        while (snippet.length > 160) {
+            let cutIndex = -1;
+            // On cherche la dernière virgule, tiret ou deux-points dans les 160 premiers caractères
+            const weakPunctuation = /[,;:\-—–]/g;
+            let wm;
+            while ((wm = weakPunctuation.exec(snippet.substring(0, 160))) !== null) {
+                cutIndex = wm.index + wm[0].length; // Inclut la ponctuation
+            }
+            
+            // Si aucune ponctuation faible, on cherche le dernier espace
+            if (cutIndex === -1) {
+                const spaceIndex = snippet.substring(0, 160).lastIndexOf(' ');
+                cutIndex = spaceIndex > 0 ? spaceIndex + 1 : 160;
+            }
+            
+            const chunk = snippet.substring(0, cutIndex);
+            if (chunk.trim().length > 0) {
+                result.push({ text: chunk, charStart: offset });
+            }
+            
+            snippet = snippet.substring(cutIndex);
+            offset += cutIndex;
+        }
+        
+        if (snippet.trim().length > 0) {
+            result.push({ text: snippet, charStart: offset });
         }
     }
     return result;
