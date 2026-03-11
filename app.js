@@ -66,6 +66,16 @@ let prefetchInFlight = new Set();
 
 
 // ─── Voice loading ────────────────────────────────────────────────────────────
+
+// Incrémenter ce numéro force la suppression de l'ancienne voix sauvegardée
+// pour tous les utilisateurs au prochain chargement de la page.
+const VOICE_PREF_VER = '3';
+if (localStorage.getItem('voice_pref_ver') !== VOICE_PREF_VER) {
+    localStorage.removeItem('reader_voice_name');
+    localStorage.setItem('voice_pref_ver', VOICE_PREF_VER);
+    console.log('[voice] Préférence de voix réinitialisée (nouvelle version)');
+}
+
 function populateVoiceList() {
     // On garde uniquement les voix françaises (fr-FR, fr-BE, fr-CA…)
     const allVoices = synth.getVoices();
@@ -76,29 +86,30 @@ function populateVoiceList() {
     const frVoices = allVoices.filter(v => v.lang.toLowerCase().startsWith('fr'));
     voices = frVoices.length ? frVoices : allVoices;
 
-    // Ne reconstruire la liste que si elle a changé (évite d'écraser le choix utilisateur en cours)
+    // Mémoriser le choix en cours avant de reconstruire la liste
     const currentName = voices[parseInt(voiceSelect.value, 10)]?.name;
     voiceSelect.innerHTML = voices.map((v, i) =>
         `<option value="${i}">${v.name} (${v.lang})</option>`
     ).join('');
 
-    // 1. Essayer de restaurer le choix de l'utilisateur s'il en a fait un
+    // 1. Restaurer le choix explicite de l'utilisateur (sauvegardé dans localStorage)
     const savedVoiceName = localStorage.getItem('reader_voice_name');
     if (savedVoiceName) {
         const idx = voices.findIndex(v => v.name === savedVoiceName);
         if (idx >= 0) { voiceSelect.value = idx; return; }
-        // Le nom sauvegardé n'existe plus (voix désinstallée) → effacer
+        // Le nom n'existe plus (voix désinstallée) → effacer
         localStorage.removeItem('reader_voice_name');
     }
-    // 2. Restaurer le choix qui était sélectionné avant le rechargement de la liste
+    // 2. Restaurer le choix qui était actif avant le rechargement de la liste
     if (currentName) {
         const idx = voices.findIndex(v => v.name === currentName);
         if (idx >= 0) { voiceSelect.value = idx; return; }
     }
-    // 3. Prendre la voix par défaut du système si elle est française
+    // 3. Voix par défaut du système (si française) ou première de la liste
     const defIdx = voices.findIndex(v => v.default);
     voiceSelect.value = defIdx >= 0 ? defIdx : 0;
 }
+
 
 // Call immediately AND on event (Chrome fires the event, Firefox already has them)
 console.log('EbookReader v20250311 loaded');
