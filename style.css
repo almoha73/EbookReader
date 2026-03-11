@@ -243,7 +243,7 @@ body {
     border-radius: 12px;
     margin-bottom: 1.5rem;
     box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-    padding: 0 20px 30px 20px; /* Safe padding for text to never hit the edges */
+    padding: 0; /* Padding inside the iframe via JS instead */
     transition: background-color 0.3s ease, color 0.3s ease;
 }
 
@@ -272,7 +272,7 @@ body {
         box-shadow: none;
         margin-bottom: 0;
         overflow: hidden; /* Ensures horizontal scroll is strictly blocked */
-        padding: 0 20px 30px 20px; /* Permanent bottom margin to prevent crop + lateral */
+        padding: 0; /* Let epubjs inside iframe handle padding */
     }
 
     /* Hide ← → nav buttons: user swipes instead */
