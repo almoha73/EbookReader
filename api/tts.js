@@ -1,4 +1,4 @@
-export default async function handler(req, res) {
+module.exports = async function handler(req, res) {
     const text = req.query.text;
     if (!text) return res.status(400).send('Missing text');
     
