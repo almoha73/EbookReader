@@ -45,7 +45,6 @@ let sentenceIdx      = 0;
 let textNodes        = [];  // [{node, start, end}]
 let pageFullText     = '';
 let iframeDoc        = null;
-let activeMarkEls    = [];  // <mark> elements currently in DOM
 
 // ─── Background audio state (keep alive when screen is off) ─────────────────────
 let audioCtx        = null;
@@ -975,7 +974,6 @@ async function initChapterReadingState() {
     textNodes    = [];
     pageFullText = '';
     iframeDoc    = null;
-    clearPrefetchCache(); // Les buffers de l'ancien chapitre ne sont plus valides
 
     if (!rendition.currentLocation()) return;
     try {
@@ -1189,9 +1187,6 @@ function stopTTSAudio() {
     globalTTSAudio.onerror = null;
 }
 
-// stubs pour compatibilité
-function clearPrefetchCache() {}
-
 // ─── Highlighting via Overlays absolus (non destructif, reste visible sans focus) ────────
 function clearHighlight() {
     if (!iframeDoc) return;
@@ -1203,7 +1198,6 @@ function clearHighlight() {
         const sel = iframeDoc.getSelection();
         if (sel) sel.removeAllRanges();
     } catch(e) {}
-    activeMarkEls = []; // kept for compatibility
 }
 
 function highlightRange(charStart, length) {
@@ -1268,7 +1262,6 @@ function highlightRange(charStart, length) {
         
         // Ajouter à l'iframe
         iframeDoc.documentElement.appendChild(container);
-        activeMarkEls.push(container);
 
         // Faire défiler automatiquement l'iframe vers la phrase si elle sort de l'écran (seulement en bas)
         const firstRect = rects[0];
