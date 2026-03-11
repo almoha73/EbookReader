@@ -654,21 +654,16 @@ function resumePlaying() {
     isPaused = false;
     lastSpeakTime = Date.now();
 
-    // Lancer le play le plus tôt possible de façon synchrone pour conserver 
-    // l'autorisation "Utilisateur" (user gesture) accordée par le bouton Play de la notification.
-    if (!globalTTSAudio.ended && globalTTSAudio.src) {
-        globalTTSAudio.play().catch(err => {
-            console.warn('[resume] play() échoué:', err.message);
-            // Si le navigateur a vidé le cache audio en pause, forcer une nouvelle requête
-            readSentence(sentenceIdx);
-        });
-        globalTTSAudio.onended = () => {
-            lastSpeakTime = Date.now();
-            if (isPlaying && !isPaused) readSentence(sentenceIdx + 1);
-        };
-    } else {
-        readSentence(sentenceIdx);
+    // Réactiver le son silencieux de fond pour rafraîchir le "media focus" d'Android
+    if (typeof silentAudioEl !== 'undefined' && silentAudioEl && silentAudioEl.paused) {
+        silentAudioEl.play().catch(()=>{});
     }
+
+    // NE JAMAIS faire globalTTSAudio.play() sur le buffer existant après une pause en arrière-plan !
+    // Android vide agressivement le buffer des <audio> en pause pour libérer de la RAM.
+    // Résultat : play() reste suspendu à l'infini sans déclencher d'erreur.
+    // Solution : On force toujours le rechargement propre de la phrase courante.
+    readSentence(sentenceIdx);
 
     setPlayIcon('pause');
     requestWakeLock();
