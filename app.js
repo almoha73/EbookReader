@@ -642,6 +642,25 @@ function applyAppearance() {
             'color': `${textColor} !important`
         }
     });
+
+    // Après un changement de taille de police, le texte dans l'iframe reflue.
+    // Il faut reconstruire l'index des textNodes pour que le surlignage reste aligné.
+    // On attend 350ms que le navigateur ait fini de redessiner avant de rebuilder.
+    if (iframeDoc && sentences.length > 0) {
+        clearHighlight();
+        setTimeout(() => {
+            const built = buildChapterTextNodes(iframeDoc);
+            textNodes    = built.textNodes;
+            pageFullText = built.pageFullText;
+            sentences    = splitSentences(pageFullText);
+            updateVisualBoundariesOnly();
+            // Si la lecture est en cours, on re-highlight la phrase courante
+            if (sentenceIdx >= 0 && sentenceIdx < sentences.length) {
+                const s = sentences[sentenceIdx];
+                highlightRange(s.charStart, s.text.length);
+            }
+        }, 350);
+    }
 }
 
 rateSelect.oninput = (e) => {
