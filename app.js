@@ -123,6 +123,7 @@ speechSynthesis.onvoiceschanged = () => { populateVoiceList(); };
 const modeGoogleBtn   = document.getElementById('mode-google');
 const modeLocalBtn    = document.getElementById('mode-local');
 const localVoiceGroup = document.getElementById('local-voice-group');
+const voiceModeHint   = document.getElementById('voice-mode-hint');
 
 function applyVoiceMode(mode) {
     voiceMode = mode;
@@ -131,10 +132,12 @@ function applyVoiceMode(mode) {
         modeGoogleBtn?.classList.add('active');
         modeLocalBtn?.classList.remove('active');
         if (localVoiceGroup) localVoiceGroup.style.display = 'none';
+        if (voiceModeHint) voiceModeHint.textContent = '✅ Voix Google — bypass Acapela, fonctionne écran éteint';
     } else {
         modeLocalBtn?.classList.add('active');
         modeGoogleBtn?.classList.remove('active');
         if (localVoiceGroup) localVoiceGroup.style.display = '';
+        if (voiceModeHint) voiceModeHint.textContent = '⚠️ Utilise le moteur Android (= Acapela si c\'est votre moteur système)';
     }
     console.log('[voiceMode] →', mode);
 }

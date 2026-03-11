@@ -72,13 +72,14 @@
                 <div class="setting-group">
                     <label>Mode voix</label>
                     <div class="font-size-controls" id="voice-mode-toggle">
-                        <button id="mode-google" class="mode-btn active" title="Télécharge la voix Google depuis Internet — fonctionne écran éteint">
-                            🌐 Google&nbsp;TTS
+                        <button id="mode-google" class="mode-btn active" title="Utilise Google Translate pour la voix — bypass Acapela, fonctionne écran éteint">
+                            🌐 Google
                         </button>
-                        <button id="mode-local" class="mode-btn" title="Utilise la voix installée sur le téléphone (peut s'arrêter écran éteint)">
-                            📱 Voix locale
+                        <button id="mode-local" class="mode-btn" title="Utilise le moteur TTS d'Android (= Acapela sur ce téléphone, peut s'arrêter écran éteint)">
+                            📱 Système
                         </button>
                     </div>
+                    <span id="voice-mode-hint" style="font-size:0.75rem;color:#8b949e;margin-top:2px"></span>
                 </div>
 
                 <div class="setting-group" id="local-voice-group" style="display:none">
