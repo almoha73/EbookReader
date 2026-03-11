@@ -1165,6 +1165,13 @@ async function playTTSAudio(idx, text, rate) {
         };
 
         globalTTSAudio.src = url;
+        
+        // Le navigateur réinitialise souvent le playbackRate après un changement de src.
+        // On le force donc EXPLICITEMENT juste avant de jouer, avec defaultPlaybackRate en bonus de sécurité
+        const safeRate = Math.min(Math.max(rate, 0.5), 2.0);
+        globalTTSAudio.defaultPlaybackRate = safeRate;
+        globalTTSAudio.playbackRate = safeRate;
+        
         globalTTSAudio.play().catch(e => {
             // Autoplay peut être bloqué si le geste utilisateur est trop vieux
             console.warn('[TTS] play() bloqué ou erreur:', e.message);
