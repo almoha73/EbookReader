@@ -58,6 +58,14 @@ let lastSpeakTime  = 0;     // debounce: avoids watchdog firing between sentence
 let wakeLock       = null;  // Screen Wake Lock to prevent screen from turning off
 let wasPlayingBeforeHidden = false; // track if we need to resume after screen on
 
+// ─── Audio prefetch cache ──────────────────────────────────────────────────────
+// Key strategy: download + decode the next PREFETCH_AHEAD sentences WHILE the
+// current one is playing (screen is still on). When the screen turns off,
+// the AudioBuffers are already in RAM — zero network needed, just audioNode.start().
+const PREFETCH_AHEAD = 6;   // sentences to keep decoded ahead
+let prefetchCache = new Map();  // sentenceIdx → AudioBuffer (decoded)
+let prefetchInFlight = new Set(); // indices currently being fetched
+
 
 // ─── Voice loading ────────────────────────────────────────────────────────────
 function populateVoiceList() {
@@ -976,6 +984,7 @@ async function initChapterReadingState() {
     textNodes    = [];
     pageFullText = '';
     iframeDoc    = null;
+    clearPrefetchCache(); // Les buffers de l'ancien chapitre ne sont plus valides
 
     if (!rendition.currentLocation()) return;
     try {
@@ -1083,91 +1092,143 @@ function readSentence(idx) {
     highlightRange(s.charStart, s.text.length);
 
     // Ensure voices are loaded
-    if (!voicesReady) {
-        populateVoiceList();
-    }
+    if (!voicesReady) populateVoiceList();
 
     const vIdx = parseInt(voiceSelect.value, 10);
     const lang = voices[vIdx] ? voices[vIdx].lang : 'fr-FR';
     const rate = parseFloat(rateSelect.value);
 
-    // Fonction de lecture par Web Audio API (survit à l'extinction de l'écran grâce à silent_1h.mp3 + cors proxy)
-    const playGoogleTTS = async (retryCount = 0) => {
-        // Bloquer la nouvelle phrase si on a fait "Pause" pendant le chargement
-        if (!isPlaying || isPaused) return;
+    // Kick off background prefetch of the next PREFETCH_AHEAD sentences
+    // (fire-and-forget — we don't await this)
+    prefetchSentencesAhead(idx, lang);
 
-        const langCode = lang.split('-')[0];
-        const textChunk = s.text.trim().substring(0, 200);
-        const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(textChunk)}&tl=${langCode}&client=tw-ob`;
-        const proxyUrl = `https://cors.eu.org/${ttsUrl}`;
-        
-        // AbortController avec timeout : si le réseau est bloqué (écran éteint),
-        // on annule le fetch après 8s et on relance la phrase (plutôt que rester bloqué indéfiniment)
-        const aborter = new AbortController();
-        const fetchTimeout = setTimeout(() => aborter.abort(), 8000);
-        
-        try {
-            const res = await fetch(proxyUrl, { signal: aborter.signal });
-            clearTimeout(fetchTimeout);
-            if (!res.ok) throw new Error('Proxy HTTP ' + res.status);
-            const arrayBuf = await res.arrayBuffer();
-            
-            if (isPaused || !isPlaying) return; // User paused during network request
-            
-            // Web Audio API context ensures it bypasses the "no <audio>.src changes in bg" rule of Android Chrome
-            if (!audioCtx || audioCtx.state === 'closed') {
-                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-            }
-            if (audioCtx.state === 'suspended') {
-                await audioCtx.resume().catch(()=>{});
-            }
-            
-            const audioData = await audioCtx.decodeAudioData(arrayBuf);
-            if (isPaused || !isPlaying) return; // Paused during decoding
-            
-            activeVoiceNode = audioCtx.createBufferSource();
-            activeVoiceNode.buffer = audioData;
-            activeVoiceNode.playbackRate.value = Math.min(Math.max(rate, 0.5), 4.0);
-            activeVoiceNode.connect(audioCtx.destination);
-            
-            activeVoiceNode.onended = () => {
-                activeVoiceNode = null;
-                if (isPlaying && !isPaused) readSentence(idx + 1);
-            };
-            
-            lastSpeakTime = Date.now(); // Met à jour juste avant de lancer
-            activeVoiceNode.start(0);
-        } catch(e) {
-            clearTimeout(fetchTimeout);
-            if (!isPlaying || isPaused) return; // Paused/stopped during request, ignore
-            
-            // Si le fetch a timeout (écran éteint → réseau bloqué), on retente dans 2s
-            if (e.name === 'AbortError' && retryCount < 5) {
-                console.warn(`[TTS] Fetch timeout (écran éteint?), retry ${retryCount + 1}/5 dans 2s...`);
-                lastSpeakTime = Date.now(); // Evite que le watchdog ne tire pendant le délai
-                setTimeout(() => { if (isPlaying && !isPaused) playGoogleTTS(retryCount + 1); }, 2000);
-                return;
-            }
-            
-            console.warn('[TTS] Echec WebAudio/GoogleTTS, fallback SpeechSynthesis:', e);
-            // Fallback: SpeechSynthesis (moins robuste écran éteint, mais mieux que rien)
-            if (!voicesReady) populateVoiceList();
-            const utt = new SpeechSynthesisUtterance(s.text);
-            if (voices[vIdx]) utt.voice = voices[vIdx];
-            utt.rate = rate;
-            utt.lang = lang;
-            utt.onstart = () => { lastSpeakTime = Date.now(); };
-            utt.onend = () => { if (isPlaying && !isPaused) readSentence(idx + 1); };
-            utt.onerror = (err) => {
-                if (err.error === 'canceled' || err.error === 'interrupted') return;
-                if (document.hidden) return; // Ne pas spammer l'UI en erreur pendant le background
-                if (isPlaying && !isPaused) readSentence(idx + 1);
-            };
-            synth.speak(utt);
+    // Play: use pre-decoded buffer if available, else fetch now
+    const buffer = prefetchCache.get(idx);
+    if (buffer) {
+        console.log(`[TTS] ✅ Cache hit phrase ${idx} — lecture immédiate`);
+        playCachedBuffer(buffer, idx, rate);
+    } else {
+        console.log(`[TTS] ⏳ Cache miss phrase ${idx} — fetch en cours...`);
+        fetchAndPlaySentence(idx, s, lang, rate);
+    }
+}
+
+// ─── Fetch + decode une phrase et met en cache ─────────────────────────────────
+async function fetchAudioBuffer(s, lang) {
+    const langCode = lang.split('-')[0];
+    const textChunk = s.text.trim().substring(0, 200);
+    const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(textChunk)}&tl=${langCode}&client=tw-ob`;
+    const proxyUrl = `https://cors.eu.org/${ttsUrl}`;
+
+    const aborter = new AbortController();
+    const fetchTimeout = setTimeout(() => aborter.abort(), 12000);
+    try {
+        const res = await fetch(proxyUrl, { signal: aborter.signal });
+        clearTimeout(fetchTimeout);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const arrayBuf = await res.arrayBuffer();
+
+        if (!audioCtx || audioCtx.state === 'closed') {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         }
+        if (audioCtx.state === 'suspended') await audioCtx.resume().catch(() => {});
+
+        return await audioCtx.decodeAudioData(arrayBuf);
+    } catch(e) {
+        clearTimeout(fetchTimeout);
+        throw e;
+    }
+}
+
+// ─── Lance le prefetch des PREFETCH_AHEAD prochaines phrases ───────────────────
+async function prefetchSentencesAhead(fromIdx, lang) {
+    for (let i = fromIdx; i < Math.min(fromIdx + PREFETCH_AHEAD, sentences.length); i++) {
+        if (prefetchCache.has(i) || prefetchInFlight.has(i)) continue;
+        prefetchInFlight.add(i);
+        const s = sentences[i];
+        fetchAudioBuffer(s, lang)
+            .then(buf => {
+                prefetchCache.set(i, buf);
+                prefetchInFlight.delete(i);
+                console.log(`[prefetch] ✅ Phrase ${i} prête en cache`);
+            })
+            .catch(err => {
+                prefetchInFlight.delete(i);
+                console.warn(`[prefetch] ❌ Phrase ${i} échouée:`, err.message);
+            });
+    }
+    // Evict old entries to keep memory under control (keep only last 3 + next PREFETCH_AHEAD)
+    for (const k of prefetchCache.keys()) {
+        if (k < fromIdx - 3 || k > fromIdx + PREFETCH_AHEAD) {
+            prefetchCache.delete(k);
+        }
+    }
+}
+
+// ─── Vide le cache (changement de page / chapitre) ────────────────────────────
+function clearPrefetchCache() {
+    prefetchCache.clear();
+    prefetchInFlight.clear();
+}
+
+// ─── Joue un AudioBuffer déjà décodé ──────────────────────────────────────────
+function playCachedBuffer(buffer, idx, rate) {
+    if (!isPlaying || isPaused) return;
+    if (!audioCtx || audioCtx.state === 'closed') {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    if (audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(() => {});
+    }
+
+    if (activeVoiceNode) { try { activeVoiceNode.onended = null; activeVoiceNode.stop(); } catch(e) {} }
+
+    activeVoiceNode = audioCtx.createBufferSource();
+    activeVoiceNode.buffer = buffer;
+    activeVoiceNode.playbackRate.value = Math.min(Math.max(rate, 0.5), 4.0);
+    activeVoiceNode.connect(audioCtx.destination);
+    activeVoiceNode.onended = () => {
+        activeVoiceNode = null;
+        if (isPlaying && !isPaused) readSentence(idx + 1);
     };
-    
-    playGoogleTTS();
+    lastSpeakTime = Date.now();
+    activeVoiceNode.start(0);
+}
+
+// ─── Fetch + joue une phrase (cache miss) avec fallback SpeechSynthesis ───────
+async function fetchAndPlaySentence(idx, s, lang, rate) {
+    if (!isPlaying || isPaused) return;
+    const vIdx = parseInt(voiceSelect.value, 10);
+    try {
+        const buffer = await fetchAudioBuffer(s, lang);
+        if (!isPlaying || isPaused) return;
+        // Store in cache before playing (useful if we retry or jump back)
+        prefetchCache.set(idx, buffer);
+        prefetchInFlight.delete(idx);
+        playCachedBuffer(buffer, idx, rate);
+    } catch(e) {
+        if (!isPlaying || isPaused) return;
+        // Si c'est un AbortError (timeout), on retente carrément readSentence
+        // Le watchdog le fera aussi, mais mieux vaut être proactif
+        if (e.name === 'AbortError') {
+            console.warn(`[TTS] Timeout fetch phrase ${idx} — le watchdog relancera`);
+            lastSpeakTime = Date.now() - 3000; // Laisser watchdog reprendre plus vite
+            return;
+        }
+        console.warn('[TTS] Fallback SpeechSynthesis pour phrase', idx, e);
+        if (!voicesReady) populateVoiceList();
+        const utt = new SpeechSynthesisUtterance(s.text);
+        if (voices[vIdx]) utt.voice = voices[vIdx];
+        utt.rate = rate;
+        utt.lang = lang;
+        utt.onstart = () => { lastSpeakTime = Date.now(); };
+        utt.onend = () => { if (isPlaying && !isPaused) readSentence(idx + 1); };
+        utt.onerror = (err) => {
+            if (err.error === 'canceled' || err.error === 'interrupted') return;
+            if (isPlaying && !isPaused) readSentence(idx + 1);
+        };
+        synth.speak(utt);
+    }
 }
 
 // ─── Highlighting via Selection API (non-destructive, no DOM mutation) ────────
