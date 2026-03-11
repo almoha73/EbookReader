@@ -631,25 +631,44 @@ function showTtsStatus(msg) {
 
 function pausePlaying() {
     isPaused = true;
-    stopSpeaking();
+    // Garder l'élément audio en vie — juste pause().
+    // Si on le détruisait (stopTTSAudio), la reprise depuis la notification
+    // demanderait un nouveau téléchargement réseau, bloqué par Android (autoplay policy).
+    if (currentTTSAudio) {
+        currentTTSAudio.onended = null; // empêche l'avance auto pendant la pause
+        currentTTSAudio.pause();
+        // NE PAS mettre src = '' → on garde le buffer en RAM
+    }
+    clearHighlight();
     setPlayIcon('play');
     releaseWakeLock();
-    // Mettre à jour la notification Android (sinon le bouton ▶️ ne fonctionne pas)
-    if ('mediaSession' in navigator) {
-        navigator.mediaSession.playbackState = 'paused';
-    }
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
 }
 
 function resumePlaying() {
     isPaused = false;
     setPlayIcon('pause');
     requestWakeLock();
-    // Remettre en lecture et informer Android
-    if ('mediaSession' in navigator) {
-        navigator.mediaSession.playbackState = 'playing';
+    if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+
+    if (currentTTSAudio && currentTTSAudio.paused && !currentTTSAudio.ended) {
+        // Reprendre l'élément audio existant — pas de requête réseau, pas de blocage autoplay
+        currentTTSAudio.onended = () => {
+            lastSpeakTime = Date.now();
+            currentTTSAudio = null;
+            if (isPlaying && !isPaused) readSentence(sentenceIdx + 1);
+        };
+        currentTTSAudio.play().catch(err => {
+            console.warn('[resume] audio.play() échoué, on recrée:', err.message);
+            currentTTSAudio = null;
+            readSentence(sentenceIdx);
+        });
+    } else {
+        // Entre deux phrases — on repart depuis la phrase courante
+        readSentence(sentenceIdx);
     }
-    readSentence(sentenceIdx);
 }
+
 
 function stopReading() {
     isPlaying  = false;
@@ -1067,23 +1086,24 @@ function readSentence(idx) {
 let currentTTSAudio = null;  // élément <audio> en cours de lecture
 let nextTTSAudio    = null;  // élément <audio> suivant (pré-chargé)
 
-function makeTTSUrl(text, lang) {
+// URL candidates — on essaie tw-ob puis gtx si le premier échoue
+function makeTTSUrl(text, lang, client = 'tw-ob') {
     const langCode = lang.split('-')[0];
     const textChunk = text.trim().substring(0, 200);
-    return `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(textChunk)}&tl=${langCode}&client=tw-ob`;
+    return `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodeURIComponent(textChunk)}&tl=${langCode}&client=${client}`;
 }
 
-function makeTTSAudioEl(text, lang) {
-    const el = new Audio(makeTTSUrl(text, lang));
-    el.preload = 'auto'; // précharger en RAM pendant que la phrase précédente joue
+function makeTTSAudioEl(text, lang, client = 'tw-ob') {
+    const el = new Audio(makeTTSUrl(text, lang, client));
+    el.preload = 'auto';
     return el;
 }
 
 // Pré-charge la phrase suivante pendant que la phrase courante joue
-function prefetchNextTTS(idx, lang) {
+function prefetchNextTTS(idx) {
     const nextIdx = idx + 1;
     if (nextIdx < sentences.length && !nextTTSAudio) {
-        nextTTSAudio = makeTTSAudioEl(sentences[nextIdx].text, lang);
+        nextTTSAudio = makeTTSAudioEl(sentences[nextIdx].text, 'fr');
         console.log(`[TTS] Prefetch phrase ${nextIdx}`);
     }
 }
@@ -1107,17 +1127,49 @@ async function playTTSAudio(idx, text, rate) {
 
     audio.playbackRate = Math.min(Math.max(rate, 0.5), 2.0);
 
+    // Timeout de sécurité : si Google ne répond pas en 8s, on passe à la phrase suivante
+    let loadTimeout = setTimeout(() => {
+        if (currentTTSAudio === audio && (audio.readyState < 2)) {
+            console.warn('[TTS] Timeout chargement phrase', idx, '— phrase suivante');
+            showTtsStatus('⏭ Google TTS lent — phrase suivante...');
+            audio.onended = null;
+            audio.onerror = null;
+            audio.pause();
+            currentTTSAudio = null;
+            if (isPlaying && !isPaused) readSentence(idx + 1);
+        }
+    }, 8000);
+
     audio.onended = () => {
+        clearTimeout(loadTimeout);
         lastSpeakTime = Date.now();
         currentTTSAudio = null;
         if (isPlaying && !isPaused) readSentence(idx + 1);
     };
 
     audio.onerror = (e) => {
-        console.error('[TTS audio] Erreur lecture phrase', idx, e);
-        showTtsStatus('❌ Google TTS — erreur. Nouvelle tentative...');
-        currentTTSAudio = null;
-        lastSpeakTime = Date.now() - 4000; // watchdog retentera dans ~1s
+        clearTimeout(loadTimeout);
+        console.warn('[TTS] Erreur phrase', idx, '— essai client=gtx');
+        // Tenter avec client=gtx comme fallback
+        const fallback = makeTTSAudioEl(text, 'fr', 'gtx');
+        fallback.playbackRate = audio.playbackRate;
+        currentTTSAudio = fallback;
+        fallback.onended = () => {
+            lastSpeakTime = Date.now();
+            currentTTSAudio = null;
+            if (isPlaying && !isPaused) readSentence(idx + 1);
+        };
+        fallback.onerror = () => {
+            console.error('[TTS] Échec tw-ob ET gtx pour phrase', idx);
+            showTtsStatus('❌ Google TTS indisponible');
+            currentTTSAudio = null;
+            lastSpeakTime = Date.now() - 4000;
+        };
+        fallback.play().catch(() => {
+            showTtsStatus('❌ Google TTS indisponible');
+            currentTTSAudio = null;
+            lastSpeakTime = Date.now() - 4000;
+        });
     };
 
     try {
