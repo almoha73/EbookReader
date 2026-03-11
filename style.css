@@ -262,6 +262,10 @@ body {
    RESPONSIVE — Mobile
 ──────────────────────────────────────── */
 @media (max-width: 768px) {
+    .hide-mobile {
+        display: none;
+    }
+
     /* Full-width viewer — swipe replaces nav buttons */
     .viewer-container {
         width: 100%; /* Important: utiliser 100% et pas 100vw pour éviter la coupure asymétrique à droite */

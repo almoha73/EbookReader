@@ -495,7 +495,10 @@ function updateProgress() {
 
 function saveProgress(cfi) {
     // localStorage is SYNCHRONOUS — survives F5/page reload immediately
+    if (!currentBookId) return;
     localStorage.setItem(`cfi_${currentBookId}`, cfi);
+    localStorage.setItem(`last_${currentBookId}`, Date.now().toString());
+    if (typeof window.requestCloudSync === 'function') window.requestCloudSync();
 }
 
 function closeReader() {
@@ -1184,6 +1187,9 @@ function readSentence(idx) {
 
     sentenceIdx = idx;
     localStorage.setItem(`sentenceIdx_${currentBookId}`, idx);
+    localStorage.setItem(`last_${currentBookId}`, Date.now().toString());
+    if (typeof window.requestCloudSync === 'function') window.requestCloudSync();
+    
     lastSpeakTime = Date.now();
     const s = sentences[idx];
 

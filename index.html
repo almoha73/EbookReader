@@ -24,9 +24,14 @@
         <div id="library-view" class="view active">
             <header class="glass-header">
                 <h1>Mes Livres</h1>
-                <label for="book-upload" class="upload-btn">
-                    <i class="fas fa-plus"></i> Ajouter un EPUB
-                </label>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <button id="google-sync-btn" class="upload-btn" style="background: linear-gradient(135deg, #4285F4, #34A853); font-size: 0.85rem;" title="Sauvegarder et synchroniser la progression">
+                        <i class="fab fa-google"></i> Cloud Sync
+                    </button>
+                    <label for="book-upload" class="upload-btn" title="Ajouter un EPUB">
+                        <i class="fas fa-plus"></i> <span class="hide-mobile">Ajouter</span>
+                    </label>
+                </div>
                 <input type="file" id="book-upload" accept=".epub" style="display: none;">
             </header>
             <main class="library-grid" id="book-list">
@@ -108,6 +113,9 @@
         </div>
     </div>
     
-    <script src="app.js?v=20260311vercel"></script>
+    <script src="https://apis.google.com/js/api.js" onload="if(typeof gapiLoaded === 'function') gapiLoaded()"></script>
+    <script src="https://accounts.google.com/gsi/client" onload="if(typeof gisLoaded === 'function') gisLoaded()"></script>
+    <script src="sync.js?v=20260311vercel2"></script>
+    <script src="app.js?v=20260311vercel2"></script>
 </body>
 </html>
