@@ -532,14 +532,14 @@ decreaseFontBtn.addEventListener('click', () => {
     if (fontSize > 50) {
         fontSize -= 25;
         localStorage.setItem('reader_fontSize', fontSize);
-        applyAppearance();
+        applyAppearance(true);
     }
 });
 increaseFontBtn.addEventListener('click', () => {
     if (fontSize < 400) {
         fontSize += 25;
         localStorage.setItem('reader_fontSize', fontSize);
-        applyAppearance();
+        applyAppearance(true);
     }
 });
 if (themeLightBtn) {
@@ -557,7 +557,7 @@ if (themeDarkBtn) {
     });
 }
 
-function applyAppearance() {
+function applyAppearance(layoutChanged = false) {
     const display = document.getElementById('font-size-display');
     if (display) display.textContent = fontSize + '%';
 
@@ -643,23 +643,47 @@ function applyAppearance() {
         }
     });
 
-    // Après un changement de taille de police, le texte dans l'iframe reflue.
-    // Il faut reconstruire l'index des textNodes pour que le surlignage reste aligné.
-    // On attend 350ms que le navigateur ait fini de redessiner avant de rebuilder.
-    if (iframeDoc && sentences.length > 0) {
+    // Si la police change, epub.js perd le calcul des pages (displayed.total).
+    // On doit forcer un rendu complet de la position actuelle pour qu'il recalcule tout.
+    if (layoutChanged && currentCfi && rendition.location && rendition.location.start) {
         clearHighlight();
-        setTimeout(() => {
-            const built = buildChapterTextNodes(iframeDoc);
-            textNodes    = built.textNodes;
-            pageFullText = built.pageFullText;
-            sentences    = splitSentences(pageFullText);
-            updateVisualBoundariesOnly();
-            // Si la lecture est en cours, on re-highlight la phrase courante
-            if (sentenceIdx >= 0 && sentenceIdx < sentences.length) {
+        
+        let wasPlaying = (isPlaying && !isPaused);
+        if (wasPlaying) pausePlaying(); // Mettre en pause pour éviter de changer de page pendant le calcul
+        
+        // Trouver la CFI exacte de la phrase en cours si possible, sinon utiliser currentCfi
+        let preciseCfiToRestore = currentCfi;
+        if (sentences && sentences[sentenceIdx] && iframeDoc) {
+            try {
+                // On essaie de fabriquer un CFI direct vers le noeud du texte avant de tout casser
                 const s = sentences[sentenceIdx];
-                highlightRange(s.charStart, s.text.length);
-            }
-        }, 350);
+                let targetNode = null;
+                for (let tn of textNodes) {
+                    if (s.charStart >= tn.start && s.charStart < tn.end) {
+                        targetNode = tn.node;
+                        break;
+                    }
+                }
+                if (targetNode) {
+                    preciseCfiToRestore = currentBook.rendition.location.start.cfi.split('!')[0] + '!' + currentBook.epubcfi.generateCfiFromNode(targetNode, s.charStart);
+                }
+            } catch (e) { console.warn("Impossible de calculer la CFI précise", e); }
+        }
+        
+        // Dire à Epub.js de recharger la page pour recalculer sa pagination correctement
+        rendition.display(preciseCfiToRestore).then(() => {
+            // L'iframe a été recréée par Epub.js, les anciens textNodes sont orphelins.
+            // initChapterReadingState() récupérera le NOUVEL iframeDoc !
+            initChapterReadingState().then(() => {
+                if (wasPlaying) {
+                    resumePlaying(); // Relance correctement la lecture
+                } else {
+                    if (sentenceIdx >= 0 && sentenceIdx < sentences.length) {
+                        highlightRange(sentences[sentenceIdx].charStart, sentences[sentenceIdx].text.length);
+                    }
+                }
+            });
+        });
     }
 }
 
