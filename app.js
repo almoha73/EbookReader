@@ -649,36 +649,17 @@ function applyAppearance(layoutChanged = false) {
         clearHighlight();
         
         let wasPlaying = (isPlaying && !isPaused);
-        if (wasPlaying) pausePlaying(); // Mettre en pause pour éviter de changer de page pendant le calcul
+        let oldSentenceIdx = sentenceIdx; // <-- SAUVEGARDE DE LA POSITION VOCALE EXACTE
+        if (wasPlaying) pausePlaying(); 
         
-        // Trouver la CFI exacte de la phrase en cours si possible, sinon utiliser currentCfi
-        let preciseCfiToRestore = currentCfi;
-        if (sentences && sentences[sentenceIdx] && iframeDoc) {
-            try {
-                // On essaie de fabriquer un CFI direct vers le noeud du texte avant de tout casser
-                const s = sentences[sentenceIdx];
-                let targetNode = null;
-                let nodeOffset = 0;
-                for (let tn of textNodes) {
-                    if (s.charStart >= tn.start && s.charStart < tn.end) {
-                        targetNode = tn.node;
-                        nodeOffset = s.charStart - tn.start;
-                        break;
-                    }
-                }
-                if (targetNode && currentBook.epubcfi && currentBook.epubcfi.generateCfiFromNode) {
-                    preciseCfiToRestore = currentBook.rendition.location.start.cfi.split('!')[0] + '!' + currentBook.epubcfi.generateCfiFromNode(targetNode, nodeOffset);
-                }
-            } catch (e) { console.warn("Impossible de calculer la CFI précise", e); }
-        }
-        
-        // Dire à Epub.js de recharger la page pour recalculer sa pagination correctement
-        rendition.display(preciseCfiToRestore).then(() => {
-            // L'iframe a été recréée par Epub.js, les anciens textNodes sont orphelins.
-            // initChapterReadingState() récupérera le NOUVEL iframeDoc !
+        // On demande à epub.js de rouvrir le livre exactement au même mot (currentCfi)
+        // en utilisant la nouvelle taille de colonne
+        rendition.display(currentCfi).then(() => {
+            // Re-cartographie du texte de la nouvelle iframe
             initChapterReadingState().then(() => {
+                sentenceIdx = oldSentenceIdx; // <-- RESTAURATION À L'IDENTIQUE
                 if (wasPlaying) {
-                    resumePlaying(); // Relance correctement la lecture
+                    resumePlaying();
                 } else {
                     if (sentenceIdx >= 0 && sentenceIdx < sentences.length) {
                         highlightRange(sentences[sentenceIdx].charStart, sentences[sentenceIdx].text.length);
