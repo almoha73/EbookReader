@@ -639,10 +639,18 @@ function showTtsStatus(msg) {
 function pausePlaying() {
     isPaused = true;
     // Garder l'élément audio en vie — juste pause().
-    // Si on le détruisait (stopTTSAudio), la reprise depuis la notification
-    // demanderait un nouveau téléchargement réseau, bloqué par Android (autoplay policy).
     globalTTSAudio.onended = null;
     globalTTSAudio.pause();
+
+    // CRUCIAL : Mettre en pause les flux de silence, sinon Android croit que la musique
+    // continue et laisse l'icône bloquée sur "Pause" dans la notification !
+    if (typeof silentAudioEl !== 'undefined' && silentAudioEl) {
+        silentAudioEl.pause();
+    }
+    if (typeof audioCtx !== 'undefined' && audioCtx && audioCtx.state === 'running') {
+        audioCtx.suspend().catch(()=>{});
+    }
+
     clearHighlight();
     setPlayIcon('play');
     releaseWakeLock();
@@ -657,6 +665,9 @@ function resumePlaying() {
     // Réactiver le son silencieux de fond pour rafraîchir le "media focus" d'Android
     if (typeof silentAudioEl !== 'undefined' && silentAudioEl && silentAudioEl.paused) {
         silentAudioEl.play().catch(()=>{});
+    }
+    if (typeof audioCtx !== 'undefined' && audioCtx && audioCtx.state === 'suspended') {
+        audioCtx.resume().catch(()=>{});
     }
 
     // NE JAMAIS faire globalTTSAudio.play() sur le buffer existant après une pause en arrière-plan !
