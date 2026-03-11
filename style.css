@@ -267,12 +267,12 @@ body {
     .viewer-container {
         width: 100vw;
         max-width: 100%;
-        margin: 0;
+        margin: 1.5rem 0 0 0; /* Espace augmenté entre la nav et le texte en haut */
         border-radius: 0;
         box-shadow: none;
         margin-bottom: 0;
         overflow: hidden; /* Ensures horizontal scroll is strictly blocked */
-        padding: 0 16px 30px 16px; /* Permanent bottom margin to prevent crop */
+        padding: 0 20px 30px 20px; /* Permanent bottom margin to prevent crop + lateral */
     }
 
     /* Hide ← → nav buttons: user swipes instead */
@@ -285,8 +285,8 @@ body {
         padding: 0.7rem 1rem;
     }
     .glass-header h2 {
-        font-size: 1.15rem;
-        max-width: 180px;
+        font-size: 1.3rem;
+        max-width: 200px;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
