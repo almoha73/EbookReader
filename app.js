@@ -218,10 +218,18 @@ async function openBook(meta) {
             updateProgress();
         });
 
+    let isInitialRelocation = true;
     rendition.on('relocated', (loc) => {
         currentCfi = loc.start.cfi;
         updateProgress();
-        saveProgress(loc.start.cfi);
+        
+        if (isInitialRelocation) {
+            isInitialRelocation = false;
+            // Ne pas écraser la date de sauvegarde au premier rendu,
+            // pour ne pas corrompre le timestamp de la synchronisation cloud
+        } else {
+            saveProgress(loc.start.cfi);
+        }
 
         // relocated fires AFTER currentLocation() is updated with the new page coordinates.
         if (pendingAutoRead && isPlaying && !isPaused) {
@@ -229,8 +237,7 @@ async function openBook(meta) {
             lastSpeakTime = Date.now();
             startPageReading();
         } else if (isPlaying && !isPaused) {
-            // Lecture synchrone intra-chapitre : mettons à jour les limites visuelles de la nouvelle page
-            // de façon asynchrone sans couper le flux audio continu (Android background bypass)
+            // Lecture synchrone intra-chapitre
             if (typeof updateVisualBoundariesOnly === 'function') updateVisualBoundariesOnly();
         }
     });

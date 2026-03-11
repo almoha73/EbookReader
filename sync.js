@@ -200,6 +200,7 @@ function mergeCloudState(cloudState, forceRefresh) {
     }
 
     let aBookWasUpdated = false;
+    let currentBookUpdated = false;
 
     // Comparaison des dates pour chaque livre
     for (const [bookId, cloudBook] of Object.entries(cloudState.books)) {
@@ -213,13 +214,18 @@ function mergeCloudState(cloudState, forceRefresh) {
             if (cloudBook.sentenceIdx !== undefined) localStorage.setItem(`sentenceIdx_${bookId}`, cloudBook.sentenceIdx);
             localStorage.setItem(`last_${bookId}`, cloudUpdateTime.toString());
             aBookWasUpdated = true;
+            if (typeof window.currentBookId !== 'undefined' && window.currentBookId === bookId) {
+                currentBookUpdated = true;
+            }
         }
     }
     
     if (aBookWasUpdated && forceRefresh) {
         alert("Des positions de lecture plus récentes ont été récupérées depuis le Cloud.");
-        // Facultatif: Rafraîchir la page si l'utilisateur est déjà dans le reader courant, 
-        // ou simplement recharger la page entière pour appliquer la synchro.
+        location.reload();
+    } else if (currentBookUpdated) {
+        // L'utilisateur est en train de lire et le cloud vient de télécharger en arrière-plan une meilleure position
+        console.log("Sync background: Le livre en cours a été mis à jour par le Cloud. Rafraîchissement...");
         location.reload();
     }
 }
