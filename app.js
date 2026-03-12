@@ -268,35 +268,27 @@ async function safeNext() {
     const loc = rendition.currentLocation();
     const displayed = loc?.start?.displayed;
     
-    // Si epub.js pense être sur la dernière page ET qu'il y a du contenu caché...
+    // Si epub.js pense être sur la dernière page du chapitre → on force la spine.
+    // On ne fait plus de détection de scrollWidth (trop peu fiable selon le navigateur).
+    // Si on est vraiment sur la dernière page du dernier chapitre, nextItem sera null
+    // et on retombe sur rendition.next() qui ne fera rien (fin du livre).
     if (displayed && displayed.page >= displayed.total) {
-        // Vérifier si le document interne a des colonnes qui débordent
         try {
-            const contents = rendition.getContents();
-            if (contents && contents.length) {
-                const doc = contents[0].document;
-                const body = doc.body;
-                const iframe = rendition.manager?.container?.querySelector('iframe');
-                const iframeWidth = iframe?.contentWindow?.innerWidth || 0;
-                const scrollWidth = body?.scrollWidth || 0;
-                const expectedWidth = iframeWidth * displayed.total;
-                
-                // Si scrollWidth > ce qu'epub.js attendait → colonne fantôme détectée
-                if (scrollWidth > expectedWidth + 10) {
-                    console.warn('[safeNext] Colonne fantôme détectée, forçage du next via spine');
-                    // Forcer l'avance au chapitre suivant directement via la spine
-                    const spineItem = currentBook.spine.get(loc.start.cfi);
-                    const nextItem = currentBook.spine.get(spineItem?.index + 1);
-                    if (nextItem) {
-                        rendition.display(nextItem.href);
-                        return;
-                    }
+            const spineItem = currentBook.spine.get(loc.start.cfi);
+            if (spineItem) {
+                const nextItem = currentBook.spine.get(spineItem.index + 1);
+                if (nextItem) {
+                    console.log('[safeNext] Dernière page → passage direct au chapitre suivant via spine');
+                    rendition.display(nextItem.href);
+                    return;
                 }
             }
         } catch(e) {
-            console.error('[safeNext] Erreur détection colonne fantôme:', e);
+            console.error('[safeNext] Erreur passage spine:', e);
         }
     }
+    
+    // Sinon, navigation normale entre pages du même chapitre
     rendition.next();
 }
 
