@@ -258,61 +258,27 @@ async function openBook(meta) {
     addSwipeListeners(viewer);
 }
 
-// ─── Navigation sûre : exploit de la symétrie prev() pour trouver la page fantôme ─
-let _phantomPageRecovered = false; // Anti-boucle : vrai quand on vient d'afficher une page fantôme
-
+// ─── Navigation  ─────────────────────────────────────────────────────────────
 async function safeNext() {
     if (!rendition) return;
-    const loc = rendition.currentLocation();
-    const displayed = loc?.start?.displayed;
-
-    // Pages internes du chapitre → navigation normale
-    if (!displayed || displayed.page < displayed.total) {
-        _phantomPageRecovered = false;
-        rendition.next();
-        return;
-    }
-
-    // On vient JUSTE d'afficher la page fantôme via la technique display+prev.
-    // Le prochain swipe doit VRAIMENT aller au chapitre suivant, sans recommencer la détection.
-    if (_phantomPageRecovered) {
-        _phantomPageRecovered = false;
+    const locBefore = rendition.currentLocation();
+    const cfiBefore = locBefore?.start?.cfi;
+    
+    // Essai d'avancer normalement (sans blocages ni ruses)
+    await rendition.next();
+    
+    // Si la page a bloqué sur elle-même (le CFI n'a pas bougé et l'écran est figé)
+    const locAfter = rendition.currentLocation();
+    const cfiAfter = locAfter?.start?.cfi;
+    if (cfiBefore && cfiAfter && cfiBefore === cfiAfter) {
+        // Seulement dans ce cas de blocage dur indépassable, on force le chapitre.
         try {
-            const spineItem = currentBook.spine.get(loc.start.cfi);
-            const nextItem = spineItem ? currentBook.spine.get(spineItem.index + 1) : null;
-            if (nextItem) { rendition.display(nextItem.href); return; }
-        } catch(e) { /* fallback */ }
-        rendition.next();
-        return;
-    }
-
-    // On est sur la "dernière page connue" (displayed.page >= displayed.total).
-    // Stratégie : aller au début du chapitre suivant, puis reculer.
-    // Si on revient dans le chapitre actuel → page fantôme ! On l'affiche.
-    // Si on reste dans le chapitre suivant → pas de page fantôme, c'est normal.
-    const hrefBefore = loc?.start?.href;
-    try {
-        const spineItem = currentBook.spine.get(loc.start.cfi);
-        if (!spineItem) { rendition.next(); return; }
-        const nextSpineItem = currentBook.spine.get(spineItem.index + 1);
-        if (!nextSpineItem) { rendition.next(); return; } // fin du livre
-
-        await rendition.display(nextSpineItem.href);
-        await rendition.prev();
-
-        const locAfterPrev = rendition.currentLocation();
-        if (locAfterPrev?.start?.href === hrefBefore) {
-            // On est revenu dans le chapitre précédent → page fantôme trouvée et affichée !
-            _phantomPageRecovered = true;
-            console.log('[safeNext] ✓ Page fantôme récupérée');
-        } else {
-            // Pas de page fantôme, on est bien au bon endroit (présumé : début ch. suivant)
-            _phantomPageRecovered = false;
-        }
-    } catch(e) {
-        console.error('[safeNext]', e);
-        _phantomPageRecovered = false;
-        rendition.next();
+            const spineItem = currentBook.spine.get(cfiBefore);
+            if (spineItem) {
+                const nextItem = currentBook.spine.get(spineItem.index + 1);
+                if (nextItem) rendition.display(nextItem.href);
+            }
+        } catch(e) {}
     }
 }
 
