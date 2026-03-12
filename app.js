@@ -259,37 +259,30 @@ async function openBook(meta) {
 }
 
 // ─── Navigation sûre : contourne le bug epubjs qui bloque sur la "fausse" dernière page ─
-// epub.js utilise des colonnes CSS. Parfois la dernière colonne dépasse du conteneur
-// mais epub.js refuse d'avancer car il croit être déjà à la fin.
-// safeNext() vérifie si le scrollWidth de l'iframe dépasse la largeur attendue,
-// et si oui, force le passage au chapitre suivant via l'API spine directement.
 async function safeNext() {
     if (!rendition) return;
-    const loc = rendition.currentLocation();
-    const displayed = loc?.start?.displayed;
+    const locBefore = rendition.currentLocation();
+    const cfiBefore = locBefore?.start?.cfi;
     
-    // Si epub.js pense être sur la dernière page du chapitre → on force la spine.
-    // On ne fait plus de détection de scrollWidth (trop peu fiable selon le navigateur).
-    // Si on est vraiment sur la dernière page du dernier chapitre, nextItem sera null
-    // et on retombe sur rendition.next() qui ne fera rien (fin du livre).
-    if (displayed && displayed.page >= displayed.total) {
+    // On demande à epub.js d'avancer d'une page (dans le même chapitre ou au suivant)
+    await rendition.next();
+    
+    // On revérifie la position
+    const locAfter = rendition.currentLocation();
+    const cfiAfter = locAfter?.start?.cfi;
+
+    // Si epub.js a refusé d'avancer (le CFI est exactement le même)
+    // C'est le fameux bug de la dernière page bloquée. On force le saut direct.
+    if (cfiBefore && cfiAfter && cfiBefore === cfiAfter) {
+        console.warn('[safeNext] epub.js bloqué — Forçage du chapitre suivant via spine');
         try {
-            const spineItem = currentBook.spine.get(loc.start.cfi);
+            const spineItem = currentBook.spine.get(cfiBefore);
             if (spineItem) {
                 const nextItem = currentBook.spine.get(spineItem.index + 1);
-                if (nextItem) {
-                    console.log('[safeNext] Dernière page → passage direct au chapitre suivant via spine');
-                    rendition.display(nextItem.href);
-                    return;
-                }
+                if (nextItem) rendition.display(nextItem.href);
             }
-        } catch(e) {
-            console.error('[safeNext] Erreur passage spine:', e);
-        }
+        } catch(e) { console.error('Erreur passage spine:', e); }
     }
-    
-    // Sinon, navigation normale entre pages du même chapitre
-    rendition.next();
 }
 
 // ─── Swipe gesture support ────────────────────────────────────────────────────
