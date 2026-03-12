@@ -51,11 +51,37 @@
                     <button id="play-pause-btn" class="icon-btn highlight" title="Lecture audio">
                         <i class="fas fa-play"></i>
                     </button>
+                    <button id="add-bookmark-btn" class="icon-btn" title="Ajouter un marque-page ici">
+                        <i class="fas fa-bookmark"></i>
+                    </button>
+                    <button id="nav-panel-btn" class="icon-btn" title="Navigation et marque-pages">
+                        <i class="fas fa-list-ul"></i>
+                    </button>
                     <button id="settings-btn" class="icon-btn" title="Paramètres audio et affichage">
                         <i class="fas fa-sliders-h"></i>
                     </button>
                 </div>
             </header>
+
+            <!-- Navigation Panel (Bookmarks & Go to Page) -->
+            <div id="nav-panel" class="settings-panel glass-panel hidden" style="left: 15px; right: auto; transform-origin: top left;">
+                <h3>Navigation</h3>
+                
+                <div class="setting-group" style="margin-top: 15px;">
+                    <label>Aller à la page</label>
+                    <div style="display:flex; gap:10px; margin-top: 5px;">
+                        <input type="number" id="goto-page-input" min="1" style="width: 80px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: inherit; border-radius: 8px; padding: 10px; font-size: 1rem;">
+                        <button id="goto-page-btn" style="padding: 10px 20px; background: var(--primary-color); border:none; color:white; border-radius:8px; font-weight:bold; cursor:pointer;">Aller</button>
+                    </div>
+                </div>
+
+                <div class="setting-group" style="margin-top: 25px;">
+                    <label>Marque-pages</label>
+                    <ul id="bookmarks-list" style="list-style:none; padding:0; margin: 10px 0 0 0; max-height: 250px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;">
+                        <!-- Bookmarks will be injected here -->
+                    </ul>
+                </div>
+            </div>
 
             <div id="viewer" class="viewer-container"></div>
             

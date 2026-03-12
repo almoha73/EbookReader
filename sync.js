@@ -188,9 +188,16 @@ function getLocalState() {
             const bookId = key.slice(4);
             const lastUpdate = parseInt(localStorage.getItem(`last_${bookId}`) || '0', 10);
             const sIdx = localStorage.getItem(`sentenceIdx_${bookId}`);
+            let marks = [];
+            try {
+                const storedMarks = localStorage.getItem(`bookmarks_${bookId}`);
+                if (storedMarks) marks = JSON.parse(storedMarks);
+            } catch(e) {}
+
             state.books[bookId] = {
                 cfi: localStorage.getItem(key),
                 last_update: lastUpdate,
+                bookmarks: marks,
                 ...(sIdx !== null ? { sentenceIdx: parseInt(sIdx, 10) } : {}),
             };
         }
@@ -216,6 +223,11 @@ function mergeCloud(cloudState, forceJump = false) {
             localStorage.setItem(`last_${bookId}`, String(cloudTime));
             if (cloudBook.sentenceIdx !== undefined) {
                 localStorage.setItem(`sentenceIdx_${bookId}`, String(cloudBook.sentenceIdx));
+            }
+            if (cloudBook.bookmarks !== undefined) {
+                localStorage.setItem(`bookmarks_${bookId}`, JSON.stringify(cloudBook.bookmarks));
+                // Refresh bookmarks list if UI is currently open
+                if (typeof window.renderBookmarks === 'function') window.renderBookmarks();
             }
             updated = true;
 

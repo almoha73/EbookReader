@@ -11,6 +11,12 @@ const backBtn       = document.getElementById('back-to-library');
 const playPauseBtn  = document.getElementById('play-pause-btn');
 const settingsBtn   = document.getElementById('settings-btn');
 const settingsPanel  = document.getElementById('settings-panel');
+const navPanelBtn    = document.getElementById('nav-panel-btn');
+const navPanel       = document.getElementById('nav-panel');
+const addBookmarkBtn = document.getElementById('add-bookmark-btn');
+const bookmarksList  = document.getElementById('bookmarks-list');
+const gotoPageInput  = document.getElementById('goto-page-input');
+const gotoPageBtn    = document.getElementById('goto-page-btn');
 const progressFill   = document.getElementById('progress-fill');
 const pageInfo       = document.getElementById('page-info');
 const rateSelect    = document.getElementById('rate-select');
@@ -527,7 +533,23 @@ prevBtn.onclick = () => { stopReading(); if (rendition) rendition.prev(); };
 nextBtn.onclick = () => { stopReading(); if (rendition) rendition.next(); };
 backBtn.onclick = closeReader;
 
-settingsBtn.onclick = () => settingsPanel.classList.toggle('hidden');
+settingsBtn.onclick = () => {
+    settingsPanel.classList.toggle('hidden');
+    navPanel.classList.add('hidden');
+};
+navPanelBtn.onclick = () => {
+    navPanel.classList.toggle('hidden');
+    settingsPanel.classList.add('hidden');
+    renderBookmarks();
+};
+document.addEventListener('click', (e) => {
+    if (!settingsPanel.contains(e.target) && !settingsBtn.contains(e.target)) {
+        settingsPanel.classList.add('hidden');
+    }
+    if (!navPanel.contains(e.target) && !navPanelBtn.contains(e.target)) {
+        navPanel.classList.add('hidden');
+    }
+});
 decreaseFontBtn.addEventListener('click', () => {
     if (fontSize > 50) {
         fontSize -= 25;
@@ -1459,3 +1481,141 @@ window.applyCloudUpdate = (cloudState) => {
 };
 
 init();
+// ─── Marque-pages et Navigation ────────────────────────────────────────────────
+function getBookmarks(bookId) {
+    try {
+        const stored = localStorage.getItem(`bookmarks_${bookId}`);
+        return stored ? JSON.parse(stored) : [];
+    } catch { return []; }
+}
+
+function saveBookmarks(bookId, marks) {
+    localStorage.setItem(`bookmarks_${bookId}`, JSON.stringify(marks));
+    if (typeof window.requestCloudSync === 'function') window.requestCloudSync();
+}
+
+function renderBookmarks() {
+    if (!bookmarksList || !currentBookId) return;
+    const marks = getBookmarks(currentBookId);
+    bookmarksList.innerHTML = '';
+    
+    if (marks.length === 0) {
+        bookmarksList.innerHTML = '<li style="color:#aaa; font-style:italic; font-size:0.9rem;">Aucun marque-page</li>';
+        return;
+    }
+
+    marks.forEach((mark, index) => {
+        const li = document.createElement('li');
+        li.style.cssText = "display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.05); padding:8px 12px; border-radius:6px; margin-bottom:5px;";
+        
+        const textSpan = document.createElement('span');
+        textSpan.style.cssText = "cursor:pointer; flex: 1; font-size:0.9rem;";
+        textSpan.textContent = mark.name || `Page ${mark.page}`;
+        textSpan.title = mark.date;
+        textSpan.onclick = () => {
+            if (rendition && mark.cfi) {
+                stopTTSAudio();
+                const wasPlaying = (isPlaying && !isPaused);
+                if (wasPlaying) pausePlaying();
+                
+                rendition.display(mark.cfi).then(() => {
+                    initChapterReadingState().then(() => {
+                        navPanel.classList.add('hidden');
+                    });
+                });
+            }
+        };
+
+        const delBtn = document.createElement('button');
+        delBtn.innerHTML = '<i class="fas fa-trash"></i>';
+        delBtn.style.cssText = "background:transparent; border:none; color:#FF6B6B; cursor:pointer; padding:5px;";
+        delBtn.onclick = (e) => {
+            e.stopPropagation();
+            marks.splice(index, 1);
+            saveBookmarks(currentBookId, marks);
+            renderBookmarks();
+        };
+
+        li.appendChild(textSpan);
+        li.appendChild(delBtn);
+        bookmarksList.appendChild(li);
+    });
+}
+
+if (addBookmarkBtn) {
+    addBookmarkBtn.addEventListener('click', () => {
+        if (!currentBookId || !currentCfi || !rendition) return;
+
+        const loc = rendition.currentLocation();
+        const page = loc?.start?.displayed?.page || "?";
+        
+        const marks = getBookmarks(currentBookId);
+        const dateStr = new Date().toLocaleString('fr-FR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+        
+        // On évite les doublons de page exacte si possible
+        const existing = marks.findIndex(m => m.cfi === currentCfi);
+        if (existing >= 0) {
+            alert("Il y a déjà un marque-page ici.");
+            return;
+        }
+
+        const name = prompt("Nom du marque-page :", `Page ${page}`);
+        if (name === null) return; // Annulé
+
+        marks.push({
+            cfi: currentCfi,
+            page: page,
+            name: name || `Page ${page}`,
+            date: dateStr,
+            timestamp: Date.now()
+        });
+        
+        saveBookmarks(currentBookId, marks);
+        
+        // Petit effet visuel
+        addBookmarkBtn.style.color = "var(--primary-color)";
+        setTimeout(() => addBookmarkBtn.style.color = "", 1000);
+    });
+}
+
+if (gotoPageBtn && gotoPageInput) {
+    gotoPageBtn.addEventListener('click', () => {
+        if (!currentBook || !rendition) return;
+        const targetPage = parseInt(gotoPageInput.value, 10);
+        if (isNaN(targetPage) || targetPage < 1) return;
+
+        const totalPages = currentBook.locations.total || 0;
+        if (totalPages === 0) {
+            alert("La pagination n'est pas encore prête, veuillez patienter.");
+            return;
+        }
+
+        const maxPage = Math.max(1, totalPages);
+        const safePage = Math.min(targetPage, maxPage);
+        
+        const wasPlaying = (isPlaying && !isPaused);
+        if (wasPlaying) pausePlaying();
+
+        // epub.js récupère la CFI par rapport à la localisation
+        // Attention: cfiFromLocation attend un index 0-based
+        let targetCfi = currentBook.locations.cfiFromLocation(safePage - 1);
+        
+        if (targetCfi) {
+            rendition.display(targetCfi).then(() => {
+                initChapterReadingState().then(() => {
+                    navPanel.classList.add('hidden');
+                    gotoPageInput.value = '';
+                });
+            });
+        }
+    });
+
+    gotoPageInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            gotoPageBtn.click();
+        }
+    });
+}
+
+// Ensure EPUB pagination generation finishes before go to page becomes usable
+// It's already generated in loadChapter (currentBook.locations.generate(1600)).
