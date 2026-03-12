@@ -1597,8 +1597,7 @@ if (gotoPageBtn && gotoPageInput) {
         if (wasPlaying) pausePlaying();
 
         // epub.js récupère la CFI par rapport à la localisation
-        // Attention: cfiFromLocation attend un index 0-based
-        let targetCfi = currentBook.locations.cfiFromLocation(safePage - 1);
+        let targetCfi = currentBook.locations.cfiFromLocation(safePage);
         
         if (targetCfi) {
             rendition.display(targetCfi).then(() => {
