@@ -625,6 +625,7 @@ function applyAppearance(layoutChanged = false) {
             background: ${bgColor} !important;
             color: ${textColor} !important;
             margin: 0 !important;
+            padding: 0 0 10vh 0 !important;
         } 
         body * { 
             font-size: inherit !important;
@@ -659,7 +660,8 @@ function applyAppearance(layoutChanged = false) {
         'body': { 
             'background': `${bgColor} !important`,
             'color': `${textColor} !important`,
-            'margin': '0 !important'
+            'margin': '0 !important',
+            'padding': '0 0 10vh 0 !important'
         },
         'body *': { 
             'font-size': 'inherit',
