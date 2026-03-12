@@ -287,11 +287,23 @@ body {
         padding: 0.7rem 1rem;
     }
     .glass-header h2 {
-        font-size: 1.3rem;
-        max-width: 200px;
+        font-size: 1.1rem;
+        flex: 1;
+        margin: 0 10px;
+        text-align: center;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
+    }
+
+    .icon-btn {
+        width: 32px;
+        height: 32px;
+        font-size: 1rem;
+    }
+
+    .reader-controls {
+        gap: 0.2rem;
     }
 
     /* Smaller library grid */
