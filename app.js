@@ -1291,7 +1291,7 @@ function readSentence(idx) {
         if (isPlaying && !isPaused) {
             lastSpeakTime = Date.now();
             pendingAutoRead = true; // wait for 'relocated' to trigger read
-            rendition?.next();
+            safeNext();
         }
         return;
     }
@@ -1301,12 +1301,11 @@ function readSentence(idx) {
     // L'OS Android maintiendra le flux audio grâce au lecteur persistant et au silentAudioEl !
     if (idx > window.currentLastVisibleSentence) {
         if (isPlaying && !isPaused) {
-            // Empêche de relancer rendition.next() en boucle avant que 'relocated' ne mette à jour la limite
+            // Empêche de relancer safeNext() en boucle avant que 'relocated' ne mette à jour la limite
             window.currentLastVisibleSentence = sentences.length;
             
-            // Le CSS ayant corrigé les colonnes fantômes, epub.js connaît la bonne taille.
-            // On peut tourner la page normalement.
-            rendition?.next();
+            // Utilisation de safeNext() pour récupérer la page fantôme au lieu du .next() buggé !
+            safeNext();
             // On NE FAIT PAS return ! On continue à parler immédiatement pour garder l'OS éveillé !
         }
     }
