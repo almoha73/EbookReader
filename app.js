@@ -1241,7 +1241,19 @@ function readSentence(idx) {
         if (isPlaying && !isPaused) {
             // Empêche de relancer rendition.next() en boucle avant que 'relocated' ne mette à jour la limite
             window.currentLastVisibleSentence = sentences.length;
-            rendition?.next();
+            
+            // Protection : Si epub.js pense qu'on est déjà à la dernière page du chapitre,
+            // on l'empêche de sauter prématurément au chapitre suivant. On laisse l'audio
+            // terminer de lire le texte invisible que epub.js a mal calculé.
+            const loc = rendition.currentLocation();
+            const displayed = loc?.start?.displayed;
+            const isLastPage = displayed && (displayed.page >= displayed.total);
+            
+            if (!isLastPage) {
+                rendition?.next();
+            } else {
+                console.warn("[TTS] Texte invisible en fin de chapitre. L'audio continue sans page turn prématuré.");
+            }
             // On NE FAIT PAS return ! On continue à parler immédiatement pour garder l'OS éveillé !
         }
     }
