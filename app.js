@@ -624,6 +624,9 @@ function applyAppearance(layoutChanged = false) {
             font-size: ${basePx}px !important;
             background: ${bgColor} !important;
             color: ${textColor} !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            box-sizing: border-box !important;
         } 
         body * { 
             font-size: inherit !important;
@@ -652,11 +655,17 @@ function applyAppearance(layoutChanged = false) {
         'html': { 
             'font-size': basePx + 'px',
             'background': `${bgColor} !important`,
-            'color': `${textColor} !important`
+            'color': `${textColor} !important`,
+            'margin': '0 !important',
+            'padding': '0 !important',
+            'box-sizing': 'border-box !important'
         },
         'body': { 
             'background': `${bgColor} !important`,
-            'color': `${textColor} !important`
+            'color': `${textColor} !important`,
+            'margin': '0 !important',
+            'padding': '0 !important',
+            'box-sizing': 'border-box !important'
         },
         'body *': { 
             'font-size': 'inherit',
