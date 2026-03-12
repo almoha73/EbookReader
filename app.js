@@ -250,13 +250,54 @@ async function openBook(meta) {
 
     rendition.on('rendered', () => {
         injectHighlightStyleAndClickListener();
-        // Note: auto-read on page turn is handled via 'relocated' event (not here)
     });
 
     rendition.on('click', () => settingsPanel.classList.add('hidden'));
 
     // Swipe left/right to turn pages (mobile)
     addSwipeListeners(viewer);
+}
+
+// ─── Navigation sûre : contourne le bug epubjs qui bloque sur la "fausse" dernière page ─
+// epub.js utilise des colonnes CSS. Parfois la dernière colonne dépasse du conteneur
+// mais epub.js refuse d'avancer car il croit être déjà à la fin.
+// safeNext() vérifie si le scrollWidth de l'iframe dépasse la largeur attendue,
+// et si oui, force le passage au chapitre suivant via l'API spine directement.
+async function safeNext() {
+    if (!rendition) return;
+    const loc = rendition.currentLocation();
+    const displayed = loc?.start?.displayed;
+    
+    // Si epub.js pense être sur la dernière page ET qu'il y a du contenu caché...
+    if (displayed && displayed.page >= displayed.total) {
+        // Vérifier si le document interne a des colonnes qui débordent
+        try {
+            const contents = rendition.getContents();
+            if (contents && contents.length) {
+                const doc = contents[0].document;
+                const body = doc.body;
+                const iframe = rendition.manager?.container?.querySelector('iframe');
+                const iframeWidth = iframe?.contentWindow?.innerWidth || 0;
+                const scrollWidth = body?.scrollWidth || 0;
+                const expectedWidth = iframeWidth * displayed.total;
+                
+                // Si scrollWidth > ce qu'epub.js attendait → colonne fantôme détectée
+                if (scrollWidth > expectedWidth + 10) {
+                    console.warn('[safeNext] Colonne fantôme détectée, forçage du next via spine');
+                    // Forcer l'avance au chapitre suivant directement via la spine
+                    const spineItem = currentBook.spine.get(loc.start.cfi);
+                    const nextItem = currentBook.spine.get(spineItem?.index + 1);
+                    if (nextItem) {
+                        rendition.display(nextItem.href);
+                        return;
+                    }
+                }
+            }
+        } catch(e) {
+            console.error('[safeNext] Erreur détection colonne fantôme:', e);
+        }
+    }
+    rendition.next();
 }
 
 // ─── Swipe gesture support ────────────────────────────────────────────────────
@@ -279,7 +320,7 @@ function addSwipeListeners(el) {
 
         if (dx < 0) {
             // Swipe left → next page
-            stopReading(); if (rendition) rendition.next();
+            stopReading(); safeNext();
         } else {
             // Swipe right → previous page
             stopReading(); if (rendition) rendition.prev();
@@ -318,7 +359,7 @@ function addIframeSwipeListeners(doc) {
 
         // ── SWIPE (horizontal, > 50 px): page turn ──
         if (Math.abs(dx) >= 50 && Math.abs(dx) > Math.abs(dy)) {
-            if (dx < 0) { stopReading(); if (rendition) rendition.next(); }
+            if (dx < 0) { stopReading(); safeNext(); }
             else        { stopReading(); if (rendition) rendition.prev(); }
         }
     }, { passive: true });
@@ -530,7 +571,7 @@ function closeReader() {
 
 // ─── Nav buttons ─────────────────────────────────────────────────────────────
 prevBtn.onclick = () => { stopReading(); if (rendition) rendition.prev(); };
-nextBtn.onclick = () => { stopReading(); if (rendition) rendition.next(); };
+nextBtn.onclick = () => { stopReading(); safeNext(); };
 backBtn.onclick = closeReader;
 
 settingsBtn.onclick = () => {
