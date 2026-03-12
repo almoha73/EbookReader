@@ -258,28 +258,68 @@ async function openBook(meta) {
     addSwipeListeners(viewer);
 }
 
-// ─── Navigation  ─────────────────────────────────────────────────────────────
+// ─── Navigation ─────────────────────────────────────────────────────────────
 async function safeNext() {
     if (!rendition) return;
-    const locBefore = rendition.currentLocation();
-    const cfiBefore = locBefore?.start?.cfi;
+
+    // Approche de Perplexity : on ne se base plus sur les pages CSS de l'iframe,
+    // on navigue de CFI en CFI (phrase par phrase) pour forcer le navigateur
+    // à nous afficher le contenu, quel que soit l'overflow du layout.
     
-    // Essai d'avancer normalement (sans blocages ni ruses)
-    await rendition.next();
-    
-    // Si la page a bloqué sur elle-même (le CFI n'a pas bougé et l'écran est figé)
-    const locAfter = rendition.currentLocation();
-    const cfiAfter = locAfter?.start?.cfi;
-    if (cfiBefore && cfiAfter && cfiBefore === cfiAfter) {
-        // Seulement dans ce cas de blocage dur indépassable, on force le chapitre.
-        try {
+    const lastVis = window.currentLastVisibleSentence;
+    // S'il reste des phrases dans le chapitre (qu'on n'a pas encore vues à l'écran)
+    if (lastVis !== undefined && sentences && textNodes && iframeDoc && lastVis < sentences.length - 1) {
+        const nextIdx = lastVis + 1;
+        const s = sentences[nextIdx];
+        if (s) {
+            let targetNode = null, nodeOffset = 0;
+            for (let tn of textNodes) {
+                if (s.charStart >= tn.start && s.charStart < tn.end) {
+                    targetNode = tn.node; 
+                    nodeOffset = s.charStart - tn.start; 
+                    break;
+                }
+            }
+            if (targetNode) {
+                try {
+                    const locBefore = rendition.currentLocation();
+                    const cfiBefore = locBefore?.start?.cfi;
+                    if (cfiBefore) {
+                        const range = iframeDoc.createRange();
+                        range.setStart(targetNode, nodeOffset);
+                        range.setEnd(targetNode, Math.min(nodeOffset + 1, targetNode.textContent.length));
+                        const cfiBase = cfiBefore.split('!')[0] + '!'; 
+                        const cfiObj = new ePub.CFI(range, cfiBase);
+                        
+                        console.log(`[safeNext] Navigation absolue vers phrase n°${nextIdx}`);
+                        await rendition.display(cfiObj.toString());
+                        return;
+                    }
+                } catch(e) { console.error('Erreur navigation CFI absolue:', e); }
+            }
+        }
+    }
+
+    // Si on arrive ici, c'est qu'on a vu absolument TOUTES les phrases du chapitre affichées.
+    // L'overflow n'est plus un problème, le chapitre est vraiment fini. On force le suivant !
+    try {
+        const locBefore = rendition.currentLocation();
+        const cfiBefore = locBefore?.start?.cfi;
+        if (cfiBefore) {
             const spineItem = currentBook.spine.get(cfiBefore);
             if (spineItem) {
                 const nextItem = currentBook.spine.get(spineItem.index + 1);
-                if (nextItem) rendition.display(nextItem.href);
+                if (nextItem) {
+                    console.log('[safeNext] Fin absolue du chapitre atteinte, on charge le suivant');
+                    await rendition.display(nextItem.href);
+                    return;
+                }
             }
-        } catch(e) {}
-    }
+        }
+    } catch(e) { console.error('Erreur de saut spine terminal:', e); }
+
+    // Ultime roue de secours en dernier recours 
+    rendition.next();
 }
 
 // ─── Swipe gesture support ────────────────────────────────────────────────────
