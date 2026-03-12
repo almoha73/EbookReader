@@ -313,6 +313,17 @@ body {
         padding: 1rem;
     }
 
+    /* Make remove buttons always visible on mobile and easier to tap */
+    .remove-btn {
+        display: flex;
+        width: 32px;
+        height: 32px;
+        font-size: 14px;
+        top: -8px;
+        right: -8px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+
     /* Settings panel takes most of screen */
     .settings-panel {
         width: calc(100% - 2rem);
