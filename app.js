@@ -263,25 +263,65 @@ async function safeNext() {
     if (!rendition) return;
     const locBefore = rendition.currentLocation();
     const cfiBefore = locBefore?.start?.cfi;
+    const hrefBefore = locBefore?.start?.href;
     
-    // On demande à epub.js d'avancer d'une page (dans le même chapitre ou au suivant)
+    // Y a-t-il encore des phrases visibles dans ce chapitre après celles affichées ?
+    const lastVis = window.currentLastVisibleSentence;
+    const hasMoreSentences = (lastVis !== undefined && sentences && lastVis < sentences.length - 1);
+
+    // On prépare le parachute : la coordonnée absolue CFI du premier mot de la phrase suivante
+    let targetCfi = null;
+    if (hasMoreSentences && iframeDoc && cfiBefore) {
+        const nextIdx = lastVis + 1;
+        const s = sentences[nextIdx];
+        if (s && textNodes.length) {
+            let targetNode = null, nodeOffset = 0;
+            for (let tn of textNodes) {
+                if (s.charStart >= tn.start && s.charStart < tn.end) {
+                    targetNode = tn.node; 
+                    nodeOffset = s.charStart - tn.start; 
+                    break;
+                }
+            }
+            if (targetNode) {
+                try {
+                    const range = iframeDoc.createRange();
+                    range.setStart(targetNode, nodeOffset);
+                    range.setEnd(targetNode, Math.min(nodeOffset + 1, targetNode.textContent.length));
+                    const cfiBase = cfiBefore.split('!')[0] + '!'; 
+                    // ePub.CFI génère une adresse millimétrique pour n'importe quel élément du texte
+                    const cfiObj = new ePub.CFI(range, cfiBase);
+                    targetCfi = cfiObj.toString();
+                } catch(e) { console.error('Erreur parachute CFI:', e); }
+            }
+        }
+    }
+
+    // On demande à epub.js d'avancer d'une page
     await rendition.next();
     
-    // On revérifie la position
+    // On revérifie où il a atterri
     const locAfter = rendition.currentLocation();
     const cfiAfter = locAfter?.start?.cfi;
+    const hrefAfter = locAfter?.start?.href;
 
-    // Si epub.js a refusé d'avancer (le CFI est exactement le même)
-    // C'est le fameux bug de la dernière page bloquée. On force le saut direct.
-    if (cfiBefore && cfiAfter && cfiBefore === cfiAfter) {
-        console.warn('[safeNext] epub.js bloqué — Forçage du chapitre suivant via spine');
-        try {
-            const spineItem = currentBook.spine.get(cfiBefore);
-            if (spineItem) {
-                const nextItem = currentBook.spine.get(spineItem.index + 1);
-                if (nextItem) rendition.display(nextItem.href);
-            }
-        } catch(e) { console.error('Erreur passage spine:', e); }
+    // Si epub.js a changé d'URL de chapitre, alors qu'il restait du texte caché dans la page fantôme
+    // Ou s'il a refusé d'avancer tout court (cfiBefore === cfiAfter).
+    if (hrefBefore !== hrefAfter || cfiBefore === cfiAfter) {
+        if (hasMoreSentences && targetCfi) {
+            console.warn('[safeNext] epub.js a sauté la page fantôme ! Ramené de force via CFI:', targetCfi);
+            rendition.display(targetCfi);
+        } else if (cfiBefore === cfiAfter && !hasMoreSentences) {
+            // Vraiment bloqué à la dernière page du vrai dernier mot. On force la sortie.
+            console.warn('[safeNext] epub.js bloqué — Forçage du chapitre suivant via spine');
+            try {
+                const spineItem = currentBook.spine.get(cfiBefore);
+                if (spineItem) {
+                    const nextItem = currentBook.spine.get(spineItem.index + 1);
+                    if (nextItem) rendition.display(nextItem.href);
+                }
+            } catch(e) { console.error('Erreur passage spine:', e); }
+        }
     }
 }
 
