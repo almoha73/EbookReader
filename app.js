@@ -259,61 +259,60 @@ async function openBook(meta) {
 }
 
 // ─── Navigation sûre : exploit de la symétrie prev() pour trouver la page fantôme ─
-// PRINCIPE : prev() depuis le début d'un chapitre atterrit TOUJOURS sur la vraie
-// dernière page du chapitre précédent (le navigateur utilise le scrollWidth réel).
-// next() depuis la page N/N saute le chapitre car epub.js sous-estime le total.
-// → On exploite prev() pour "récupérer" la page fantôme que next() aurait sautée.
+let _phantomPageRecovered = false; // Anti-boucle : vrai quand on vient d'afficher une page fantôme
+
 async function safeNext() {
     if (!rendition) return;
-    const locBefore = rendition.currentLocation();
-    const hrefBefore = locBefore?.start?.href;
-    const displayed = locBefore?.start?.displayed;
+    const loc = rendition.currentLocation();
+    const displayed = loc?.start?.displayed;
 
-    // Sur les pages internes du chapitre → navigation normale, pas de détection nécessaire
+    // Pages internes du chapitre → navigation normale
     if (!displayed || displayed.page < displayed.total) {
+        _phantomPageRecovered = false;
         rendition.next();
         return;
     }
 
-    // On est sur la "dernière page connue" du chapitre (displayed.page >= displayed.total).
-    // La page fantôme peut exister juste après. On va la chercher via la stratégie inverse :
-    // 1. Sauter au chapitre suivant (ça marche toujours car epub.js navigue par spine)
-    // 2. Reculer d'une page depuis le début du chapitre suivant (prev() utilise le scrollWidth réel)
-    // 3. Si on atterrit encore dans le chapitre d'origine → colonne fantôme trouvée et affichée !
-    // 4. Si on atterrit dans le chapitre suivant → il n'y avait pas de colonne fantôme, on y reste.
+    // On vient JUSTE d'afficher la page fantôme via la technique display+prev.
+    // Le prochain swipe doit VRAIMENT aller au chapitre suivant, sans recommencer la détection.
+    if (_phantomPageRecovered) {
+        _phantomPageRecovered = false;
+        try {
+            const spineItem = currentBook.spine.get(loc.start.cfi);
+            const nextItem = spineItem ? currentBook.spine.get(spineItem.index + 1) : null;
+            if (nextItem) { rendition.display(nextItem.href); return; }
+        } catch(e) { /* fallback */ }
+        rendition.next();
+        return;
+    }
 
+    // On est sur la "dernière page connue" (displayed.page >= displayed.total).
+    // Stratégie : aller au début du chapitre suivant, puis reculer.
+    // Si on revient dans le chapitre actuel → page fantôme ! On l'affiche.
+    // Si on reste dans le chapitre suivant → pas de page fantôme, c'est normal.
+    const hrefBefore = loc?.start?.href;
     try {
-        const spineItem = currentBook.spine.get(locBefore.start.cfi);
+        const spineItem = currentBook.spine.get(loc.start.cfi);
         if (!spineItem) { rendition.next(); return; }
-        
         const nextSpineItem = currentBook.spine.get(spineItem.index + 1);
-        if (!nextSpineItem) { 
-            // Vraie fin du livre
-            rendition.next(); 
-            return; 
-        }
+        if (!nextSpineItem) { rendition.next(); return; } // fin du livre
 
-        // Aller au début du chapitre suivant
         await rendition.display(nextSpineItem.href);
-        
-        // Reculer d'une page — epub.js va maintenant utiliser le scrollWidth RÉEL
-        // pour retrouver la "vraie" dernière page du chapitre précédent
         await rendition.prev();
-        
-        const locAfterPrev = rendition.currentLocation();
-        const hrefAfterPrev = locAfterPrev?.start?.href;
 
-        if (hrefAfterPrev === hrefBefore) {
-            // On est revenu dans le chapitre précédent → page fantôme trouvée et affichée ! ✓
-            console.log('[safeNext] ✓ Page fantôme récupérée via prev() depuis le chapitre suivant');
+        const locAfterPrev = rendition.currentLocation();
+        if (locAfterPrev?.start?.href === hrefBefore) {
+            // On est revenu dans le chapitre précédent → page fantôme trouvée et affichée !
+            _phantomPageRecovered = true;
+            console.log('[safeNext] ✓ Page fantôme récupérée');
         } else {
-            // On est resté dans le chapitre suivant → il n'y avait pas de page fantôme
-            // → on est bien au bon endroit (début du chapitre suivant)
-            console.log('[safeNext] Pas de page fantôme, navigation normale vers le chapitre suivant');
+            // Pas de page fantôme, on est bien au bon endroit (présumé : début ch. suivant)
+            _phantomPageRecovered = false;
         }
     } catch(e) {
-        console.error('[safeNext] Erreur:', e);
-        rendition.next(); // Fallback 
+        console.error('[safeNext]', e);
+        _phantomPageRecovered = false;
+        rendition.next();
     }
 }
 
