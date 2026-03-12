@@ -1154,29 +1154,28 @@ function updateVisualBoundariesOnly() {
     const totalPages = displayed?.total || 1;
     const page       = displayed?.page  || 1;
 
-    const layoutWidth = iframeDoc.defaultView.innerWidth;
-    const colWidth    = layoutWidth / totalPages;
-    const colStart = (page - 1) * colWidth;
-    const colEnd   = page * colWidth;
+    const viewportWidth = iframeDoc.defaultView.innerWidth;
+    const viewportHeight = iframeDoc.defaultView.innerHeight;
 
     window.currentFirstVisibleSentence = 0;
     // VERY IMPORTANT: fallback to end of chapter if calculation fails
     window.currentLastVisibleSentence = sentences.length - 1; 
     let foundFirst = false;
 
-    // Find which sentences fall in the current column viewport
+    // Find which sentences fall in the current viewport
     for (let i = 0; i < sentences.length; i++) {
         const rect = getSentenceRect(iframeDoc, sentences[i]);
         if (rect.width === 0 && rect.height === 0) continue;
 
-        if (rect.right > colStart && rect.left < colEnd) {
+        // Une phrase est visible si elle intersecte l'écran actuel (coordonnées relatives au viewport)
+        if (rect.right > 0 && rect.left < viewportWidth && rect.bottom > 0 && rect.top < viewportHeight) {
             if (!foundFirst) {
                 window.currentFirstVisibleSentence = i;
                 foundFirst = true;
             }
             window.currentLastVisibleSentence = i;
-        } else if (rect.left >= colEnd) {
-            break; // Gone past the right edge, no need to check further
+        } else if (foundFirst && rect.left >= viewportWidth) {
+            break; // On a trouvé la première phrase, et on est passé à droite de l'écran, on peut s'arrêter
         }
     }
     
