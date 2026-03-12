@@ -1301,16 +1301,27 @@ function readSentence(idx) {
     }
 
     // FIN DE PAGE (mais même chapitre) : audio continu synchronisé
-    // On tourne VISUELLEMENT, mais l'audio s'enchaîne de façon continue dans le code
-    // L'OS Android maintiendra le flux audio grâce au lecteur persistant et au silentAudioEl !
+    // On doit tourner VISUELLEMENT la page AVANT de lancer l'audio de la phrase.
     if (idx > window.currentLastVisibleSentence) {
         if (isPlaying && !isPaused) {
+            console.log(`[TTS] Fin de page visuelle atteinte à la phrase ${idx}. Pivotement.`);
+            lastSpeakTime = Date.now();
+            
             // Empêche de relancer safeNext() en boucle avant que 'relocated' ne mette à jour la limite
             window.currentLastVisibleSentence = sentences.length;
             
-            // Utilisation de safeNext() pour récupérer la page fantôme au lieu du .next() buggé !
+            // On signale au listener 'relocated' (plus bas) qu'il devra relancer la lecture de (idx)
+            // dès que la nouvelle page sera apparue visuellement.
+            pendingAutoRead = true;
+            sentenceIdx = idx; // pour savoir de quelle phrase on repart
+            localStorage.setItem(`sentenceIdx_${currentBookId}`, idx);
+
+            // Appel de notre fonction robuste qui centre par CFI
             safeNext();
-            // On NE FAIT PAS return ! On continue à parler immédiatement pour garder l'OS éveillé !
+            
+            // On ARRÊTE la fonction ici ! L'audio de la phrase courante (et l'enchaînement)
+            // ne se lancera que lorsque epub.js aura dit "ok j'ai fini d'afficher la page" 
+            return;
         }
     }
 
