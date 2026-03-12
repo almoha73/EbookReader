@@ -258,70 +258,62 @@ async function openBook(meta) {
     addSwipeListeners(viewer);
 }
 
-// ─── Navigation sûre : contourne le bug epubjs qui bloque sur la "fausse" dernière page ─
+// ─── Navigation sûre : exploit de la symétrie prev() pour trouver la page fantôme ─
+// PRINCIPE : prev() depuis le début d'un chapitre atterrit TOUJOURS sur la vraie
+// dernière page du chapitre précédent (le navigateur utilise le scrollWidth réel).
+// next() depuis la page N/N saute le chapitre car epub.js sous-estime le total.
+// → On exploite prev() pour "récupérer" la page fantôme que next() aurait sautée.
 async function safeNext() {
     if (!rendition) return;
     const locBefore = rendition.currentLocation();
-    const cfiBefore = locBefore?.start?.cfi;
     const hrefBefore = locBefore?.start?.href;
-    
-    // Y a-t-il encore des phrases visibles dans ce chapitre après celles affichées ?
-    const lastVis = window.currentLastVisibleSentence;
-    const hasMoreSentences = (lastVis !== undefined && sentences && lastVis < sentences.length - 1);
+    const displayed = locBefore?.start?.displayed;
 
-    // On prépare le parachute : la coordonnée absolue CFI du premier mot de la phrase suivante
-    let targetCfi = null;
-    if (hasMoreSentences && iframeDoc && cfiBefore) {
-        const nextIdx = lastVis + 1;
-        const s = sentences[nextIdx];
-        if (s && textNodes.length) {
-            let targetNode = null, nodeOffset = 0;
-            for (let tn of textNodes) {
-                if (s.charStart >= tn.start && s.charStart < tn.end) {
-                    targetNode = tn.node; 
-                    nodeOffset = s.charStart - tn.start; 
-                    break;
-                }
-            }
-            if (targetNode) {
-                try {
-                    const range = iframeDoc.createRange();
-                    range.setStart(targetNode, nodeOffset);
-                    range.setEnd(targetNode, Math.min(nodeOffset + 1, targetNode.textContent.length));
-                    const cfiBase = cfiBefore.split('!')[0] + '!'; 
-                    // ePub.CFI génère une adresse millimétrique pour n'importe quel élément du texte
-                    const cfiObj = new ePub.CFI(range, cfiBase);
-                    targetCfi = cfiObj.toString();
-                } catch(e) { console.error('Erreur parachute CFI:', e); }
-            }
-        }
+    // Sur les pages internes du chapitre → navigation normale, pas de détection nécessaire
+    if (!displayed || displayed.page < displayed.total) {
+        rendition.next();
+        return;
     }
 
-    // On demande à epub.js d'avancer d'une page
-    await rendition.next();
-    
-    // On revérifie où il a atterri
-    const locAfter = rendition.currentLocation();
-    const cfiAfter = locAfter?.start?.cfi;
-    const hrefAfter = locAfter?.start?.href;
+    // On est sur la "dernière page connue" du chapitre (displayed.page >= displayed.total).
+    // La page fantôme peut exister juste après. On va la chercher via la stratégie inverse :
+    // 1. Sauter au chapitre suivant (ça marche toujours car epub.js navigue par spine)
+    // 2. Reculer d'une page depuis le début du chapitre suivant (prev() utilise le scrollWidth réel)
+    // 3. Si on atterrit encore dans le chapitre d'origine → colonne fantôme trouvée et affichée !
+    // 4. Si on atterrit dans le chapitre suivant → il n'y avait pas de colonne fantôme, on y reste.
 
-    // Si epub.js a changé d'URL de chapitre, alors qu'il restait du texte caché dans la page fantôme
-    // Ou s'il a refusé d'avancer tout court (cfiBefore === cfiAfter).
-    if (hrefBefore !== hrefAfter || cfiBefore === cfiAfter) {
-        if (hasMoreSentences && targetCfi) {
-            console.warn('[safeNext] epub.js a sauté la page fantôme ! Ramené de force via CFI:', targetCfi);
-            rendition.display(targetCfi);
-        } else if (cfiBefore === cfiAfter && !hasMoreSentences) {
-            // Vraiment bloqué à la dernière page du vrai dernier mot. On force la sortie.
-            console.warn('[safeNext] epub.js bloqué — Forçage du chapitre suivant via spine');
-            try {
-                const spineItem = currentBook.spine.get(cfiBefore);
-                if (spineItem) {
-                    const nextItem = currentBook.spine.get(spineItem.index + 1);
-                    if (nextItem) rendition.display(nextItem.href);
-                }
-            } catch(e) { console.error('Erreur passage spine:', e); }
+    try {
+        const spineItem = currentBook.spine.get(locBefore.start.cfi);
+        if (!spineItem) { rendition.next(); return; }
+        
+        const nextSpineItem = currentBook.spine.get(spineItem.index + 1);
+        if (!nextSpineItem) { 
+            // Vraie fin du livre
+            rendition.next(); 
+            return; 
         }
+
+        // Aller au début du chapitre suivant
+        await rendition.display(nextSpineItem.href);
+        
+        // Reculer d'une page — epub.js va maintenant utiliser le scrollWidth RÉEL
+        // pour retrouver la "vraie" dernière page du chapitre précédent
+        await rendition.prev();
+        
+        const locAfterPrev = rendition.currentLocation();
+        const hrefAfterPrev = locAfterPrev?.start?.href;
+
+        if (hrefAfterPrev === hrefBefore) {
+            // On est revenu dans le chapitre précédent → page fantôme trouvée et affichée ! ✓
+            console.log('[safeNext] ✓ Page fantôme récupérée via prev() depuis le chapitre suivant');
+        } else {
+            // On est resté dans le chapitre suivant → il n'y avait pas de page fantôme
+            // → on est bien au bon endroit (début du chapitre suivant)
+            console.log('[safeNext] Pas de page fantôme, navigation normale vers le chapitre suivant');
+        }
+    } catch(e) {
+        console.error('[safeNext] Erreur:', e);
+        rendition.next(); // Fallback 
     }
 }
 
