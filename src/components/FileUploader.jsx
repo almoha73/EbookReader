@@ -13,14 +13,12 @@ const FileUploader = () => {
         return;
       }
       
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        const arrayBuffer = event.target.result;
-        const id = `${file.name}_${file.size}`;
-        setBookId(id);
-        setEpubUrl(arrayBuffer);
-      };
-      reader.readAsArrayBuffer(file);
+      // epubjs 0.3 n'accepte PAS un ArrayBuffer directement.
+      // On crée une Blob URL — c'est l'API correcte !
+      const blobUrl = URL.createObjectURL(file);
+      const id = `${file.name}_${file.size}`;
+      setBookId(id);
+      setEpubUrl(blobUrl);
     }
   };
 
