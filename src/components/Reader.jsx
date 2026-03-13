@@ -39,20 +39,21 @@ const Reader = ({ epubUrl, bookId }) => {
     renditionRef.current = rendition;
 
     // Correction CSS structurelle : annuler marges et débordements webkit
+    // addStylesheetRules n'existe plus dans epubjs 0.3 — on injecte via le document de l'iframe
     rendition.hooks.content.register((contents) => {
-      const css = `
+      const style = contents.document.createElement('style');
+      style.textContent = `
         html, body {
           margin: 0 !important;
           padding: 0 !important;
           box-sizing: border-box !important;
         }
         .tts-active-word {
-          background-color: var(--highlight-color, rgba(255, 255, 0, 0.4)) !important;
+          background-color: rgba(255, 255, 0, 0.4);
           border-radius: 2px;
-          transition: background-color 0.2s ease;
         }
       `;
-      contents.addStylesheetRules(css);
+      contents.document.head.appendChild(style);
     });
 
     const savedCfi = loadProgress(bookId);
