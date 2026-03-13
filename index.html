@@ -1,12 +1,147 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="fr">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>Lecteur EPUB React</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
+    <title>Ebook Reader - PlayLivres Style</title>
+    <link rel="stylesheet" href="style.css?v=20260311vercel">
+    <!-- Google Fonts for typography -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;600;700&display=swap" rel="stylesheet">
+    <!-- ePub.js and its dependency JSZip -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.1.5/jszip.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/epubjs/dist/epub.min.js"></script>
+    <!-- localForage for storing EPUB files in IndexedDB easily -->
+    <script src="https://cdn.jsdelivr.net/npm/localforage@1.10.0/dist/localforage.min.js"></script>
+    <!-- FontAwesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Library View -->
+        <div id="library-view" class="view active">
+            <header class="glass-header">
+                <h1>Mes Livres</h1>
+                <div style="display: flex; gap: 0.5rem; align-items: center;">
+                    <button id="google-sync-btn" class="upload-btn" style="background: linear-gradient(135deg, #4285F4, #34A853); font-size: 0.85rem;" title="Sauvegarder et synchroniser la progression">
+                        <i class="fab fa-google"></i> Cloud Sync
+                    </button>
+                    <label for="book-upload" class="upload-btn" title="Ajouter un EPUB">
+                        <i class="fas fa-plus"></i> <span class="hide-mobile">Ajouter</span>
+                    </label>
+                </div>
+                <input type="file" id="book-upload" accept=".epub" style="display: none;">
+            </header>
+            <main class="library-grid" id="book-list">
+                <!-- Book Cards will be injected here -->
+            </main>
+        </div>
+
+        <!-- Reader View -->
+        <div id="reader-view" class="view">
+            <header class="glass-header slide-in">
+                <button id="back-to-library" class="icon-btn" title="Retour à la bibliothèque">
+                    <i class="fas fa-arrow-left"></i>
+                </button>
+                <h2 id="current-book-title">Titre du livre</h2>
+                
+                <div class="reader-controls">
+                    <button id="play-pause-btn" class="icon-btn highlight" title="Lecture audio">
+                        <i class="fas fa-play"></i>
+                    </button>
+                    <button id="add-bookmark-btn" class="icon-btn" title="Ajouter un marque-page ici">
+                        <i class="fas fa-bookmark"></i>
+                    </button>
+                    <button id="nav-panel-btn" class="icon-btn" title="Navigation et marque-pages">
+                        <i class="fas fa-list-ul"></i>
+                    </button>
+                    <button id="settings-btn" class="icon-btn" title="Paramètres audio et affichage">
+                        <i class="fas fa-sliders-h"></i>
+                    </button>
+                </div>
+            </header>
+
+            <!-- Navigation Panel (Bookmarks & Go to Page) -->
+            <div id="nav-panel" class="settings-panel glass-panel hidden" style="left: 15px; right: auto; transform-origin: top left;">
+                <h3>Navigation</h3>
+                
+                <div class="setting-group" style="margin-top: 15px;">
+                    <label>Aller à la page</label>
+                    <div style="display:flex; gap:10px; margin-top: 5px;">
+                        <input type="number" id="goto-page-input" min="1" style="width: 80px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); color: inherit; border-radius: 8px; padding: 10px; font-size: 1rem;">
+                        <button id="goto-page-btn" style="padding: 10px 20px; background: var(--primary-color); border:none; color:white; border-radius:8px; font-weight:bold; cursor:pointer;">Aller</button>
+                    </div>
+                </div>
+
+                <div class="setting-group" style="margin-top: 25px;">
+                    <label>Marque-pages</label>
+                    <ul id="bookmarks-list" style="list-style:none; padding:0; margin: 10px 0 0 0; max-height: 250px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;">
+                        <!-- Bookmarks will be injected here -->
+                    </ul>
+                </div>
+            </div>
+
+            <div id="viewer" class="viewer-container"></div>
+            
+            <button id="prev-page" class="nav-btn left"><i class="fas fa-chevron-left"></i></button>
+            <button id="next-page" class="nav-btn right"><i class="fas fa-chevron-right"></i></button>
+
+            <!-- Page info (e.g., Page 15 sur 120) -->
+            <div id="page-info" class="page-info"></div>
+
+            <!-- Bottom Progress bar -->
+            <div class="reading-progress">
+                <div class="progress-bar-fill" id="progress-fill"></div>
+            </div>
+
+            <!-- Settings Panel (Audio & Display) -->
+            <div id="settings-panel" class="settings-panel glass-panel hidden">
+                <h3>Paramètres</h3>
+                
+
+
+                <div class="setting-group">
+                    <label>Vitesse de lecture</label>
+                    <input type="range" id="rate-select" min="0.5" max="2" value="1" step="0.1">
+                    <span id="rate-value">1.0x</span>
+                </div>
+
+                <div class="setting-group">
+                    <label>Taille du texte</label>
+                    <div class="font-size-controls">
+                        <button id="decrease-font">A-</button>
+                        <span id="font-size-display" style="min-width:45px;text-align:center;font-size:13px;color:#aaa">100%</span>
+                        <button id="increase-font">A+</button>
+                    </div>
+                </div>
+
+                <div class="setting-group">
+                    <label>Apparence</label>
+                    <div class="font-size-controls">
+                        <button id="theme-light">Clair</button>
+                        <button id="theme-dark">Sombre</button>
+                    </div>
+                </div>
+
+                <div class="setting-group" style="margin-top: 15px;">
+                    <label>Couleur du surlignage</label>
+                    <div class="color-picker-group" id="highlight-color-picker">
+                        <button class="color-btn" data-color="#FFE033" style="background-color: #FFE033;" title="Jaune"></button>
+                        <button class="color-btn" data-color="#00FFAA" style="background-color: #00FFAA;" title="Vert"></button>
+                        <button class="color-btn" data-color="#FF6B6B" style="background-color: #FF6B6B;" title="Rouge"></button>
+                        <button class="color-btn" data-color="#CC88FF" style="background-color: #CC88FF;" title="Violet"></button>
+                        <button class="color-btn" data-color="#4CA6FF" style="background-color: #4CA6FF;" title="Bleu"></button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script src="sync.js?v=20260311v5"></script>
+    <script src="app.js?v=20260311v5"></script>
+    <script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
+    <script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
+</body>
 </html>
