@@ -34,7 +34,6 @@ const Reader = ({ epubUrl, bookId }) => {
       width: '100%',
       height: '100%',
       spread: 'none',   // Important pour mobile (une seule page)
-      manager: 'continuous',
       flow: 'paginated',
     });
     renditionRef.current = rendition;
