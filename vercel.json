@@ -9,7 +9,7 @@
       "src": "**/*",
       "use": "@vercel/static",
       "config": {
-        "exclude": ["api/**", ".vercelignore", "vercel.json", ".git/**"]
+        "exclude": ["api/**", ".vercelignore", "vercel.json", ".git/**", "src/**", "node_modules/**"]
       }
     }
   ],
