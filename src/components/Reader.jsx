@@ -98,6 +98,15 @@ const Reader = ({ epubUrl, bookId }) => {
         if (parent) {
           const style = iframeDoc.defaultView.getComputedStyle(parent);
           if (style.display === 'none' || style.visibility === 'hidden') continue;
+          
+          // Vérification CRITIQUE : on ne prend que les textes visibles sur *cette* page !
+          // Epubjs en mode paginé garde tout le chapitre dans le DOM, décalé horizontalement.
+          const rect = parent.getBoundingClientRect();
+          const viewportWidth = window.innerWidth;
+          // Si l'élément est hors écran à gauche ou à droite, on zappe
+          if (rect.right < 0 || rect.left > viewportWidth) {
+             continue; // Pas affiché sur la page actuelle
+          }
         }
         
         const start = fullText.length;
@@ -108,6 +117,7 @@ const Reader = ({ epubUrl, bookId }) => {
       }
     }
 
+    console.log(`[TTS] Extraction: ${nodesMap.length} nœuds texte visibles sur cette page.`);
     textNodesRef.current = nodesMap;
     
     const splitSentences = [];
@@ -134,10 +144,11 @@ const Reader = ({ epubUrl, bookId }) => {
       return;
     }
 
-    // Gestion du cas où on tourne une page "sans texte" (ex: image de couverture)
+    // Astuce Chrome : si aucune phrase on force la page d'après
     if (sentences.length === 0) {
+      console.log("TTS: Aucune phrase trouvée sur cette page. Passage page suivante...");
       const timer = setTimeout(() => {
-        renditionRef.current?.next();
+        if (isPlaying) renditionRef.current?.next();
       }, 1500);
       return () => clearTimeout(timer);
     }
@@ -148,6 +159,10 @@ const Reader = ({ epubUrl, bookId }) => {
     utterance.lang = 'fr-FR';
     utterance.rate = ttsRate;
 
+    utterance.onstart = () => {
+      console.log(`[TTS] Début de la lecture (Vitesse: ${ttsRate}) : "${pageText.substring(0, 30)}..."`);
+    };
+
     // Surlignage dynamique
     utterance.onboundary = (event) => {
       if (event.name === 'word') {
@@ -156,23 +171,28 @@ const Reader = ({ epubUrl, bookId }) => {
     };
 
     utterance.onend = () => {
+      console.log("[TTS] Phrase terminée.");
       clearHighlight();
-      if (isPlaying) {
-        console.log("TTS fin de page : nextPage automatique via Epubjs");
+      if (useReaderStore.getState().isPlaying) {
+        console.log("[TTS] Changement de page automatique via Epubjs...");
         renditionRef.current?.next();
       }
     };
 
     utterance.onerror = (e) => {
-      console.error("Erreur Web Speech API :", e);
+      console.error("[TTS] Erreur Web Speech API reçue :", e);
       setIsPlaying(false);
     };
 
     utteranceRef.current = utterance;
-    window.speechSynthesis.cancel(); // Vide le tampon
+    
+    // Essai de lancement (fix Chrome : cancel avant de parler)
+    window.speechSynthesis.cancel(); 
+    console.log("[TTS] Lancement de speechSynthesis.speak()");
     window.speechSynthesis.speak(utterance);
 
     return () => {
+      console.log("[TTS] Cleanup du useEffect (cancel).");
       window.speechSynthesis.cancel();
       clearHighlight();
     };

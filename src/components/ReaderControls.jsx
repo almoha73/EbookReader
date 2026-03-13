@@ -18,7 +18,15 @@ const ReaderControls = () => {
       {/* Playback Controls */}
       <div className="flex items-center space-x-2">
         <button 
-          onClick={() => setIsPlaying(!isPlaying)}
+          onClick={() => {
+            if (!isPlaying) {
+               // Déblocage obligatoire de l'API WebSpeech sur Mobile/Safari :
+               // L'API *doit* être initialisée par une vraie interaction utilisateur.
+               const unlockAudio = new SpeechSynthesisUtterance('');
+               window.speechSynthesis.speak(unlockAudio);
+            }
+            setIsPlaying(!isPlaying);
+          }}
           className={`p-2 rounded-full transition-colors ${isPlaying ? 'bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300' : 'bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300'}`}
         >
           {isPlaying ? <Pause size={20} /> : <Play size={20} />}
