@@ -136,7 +136,7 @@ const Reader = ({ epubUrl, bookId }) => {
     setSentences(splitSentences);
   }, []);
 
-  // 4. Moteur TTS (Web Speech API native avec surlignage par onboundary)
+    // 4. Moteur TTS (Web Speech API native avec surlignage par onboundary)
   useEffect(() => {
     if (!isPlaying) {
       window.speechSynthesis.cancel();
@@ -157,56 +157,46 @@ const Reader = ({ epubUrl, bookId }) => {
     const pageText = sentences.map(s => s.text).join(' ');
     const utterance = new SpeechSynthesisUtterance(pageText);
     
-    // Attendre d'avoir des voix disponibles (fix Chrome)
-    const setVoiceAndSpeak = () => {
-      utterance.lang = 'fr-FR';
-      utterance.rate = ttsRate;
-      
-      const voices = window.speechSynthesis.getVoices();
-      if (voices.length > 0) {
-        // Optionnel : Forcer une voix française premium si dispo
-        const frVoice = voices.find(v => v.lang.startsWith('fr-') && (v.name.includes('Premium') || v.name.includes('Google')));
-        if (frVoice) utterance.voice = frVoice;
+    utterance.lang = 'fr-FR';
+    utterance.rate = ttsRate;
+    
+    // Assigner une voix française ("Premium" de préférence) si les voix sont déjà dans la console
+    const voices = window.speechSynthesis.getVoices();
+    if (voices.length > 0) {
+      const frVoice = voices.find(v => v.lang.startsWith('fr-') && (v.name.includes('Premium') || v.name.includes('Google')));
+      if (frVoice) utterance.voice = frVoice;
+    }
+
+    // Surlignage dynamique
+    utterance.onboundary = (event) => {
+      if (event.name === 'word') {
+        highlightWordAtOffset(event.charIndex, event.charLength);
       }
-
-      // Surlignage dynamique
-      utterance.onboundary = (event) => {
-        if (event.name === 'word') {
-          highlightWordAtOffset(event.charIndex, event.charLength);
-        }
-      };
-
-      utterance.onstart = () => {
-        console.log(`[TTS] Début de lecture (Vitesse: ${ttsRate}) : "${pageText.substring(0, 30)}..."`);
-      };
-
-      utterance.onend = () => {
-        console.log("[TTS] Phrase terminée.");
-        clearHighlight();
-        if (useReaderStore.getState().isPlaying) {
-          console.log("[TTS] Changement de page automatique via Epubjs...");
-          renditionRef.current?.next();
-        }
-      };
-
-      utterance.onerror = (e) => {
-        // En cas d'annulation liée au cleanup de useEffect, on ignore
-        if (e.error === 'interrupted' || e.error === 'canceled') return;
-        console.error("[TTS] Erreur Web Speech API reçue :", e);
-        setIsPlaying(false);
-      };
-
-      utteranceRef.current = utterance;
-      window.speechSynthesis.speak(utterance);
     };
 
-    // Fix Bug Mobile : Chrome n'a pas encore chargé les voix ? On attend. 
-    if (window.speechSynthesis.getVoices().length === 0) {
-       console.log("[TTS] Voix non prêtes, attente...");
-       window.speechSynthesis.addEventListener('voiceschanged', setVoiceAndSpeak, { once: true });
-    } else {
-       setVoiceAndSpeak();
-    }
+    utterance.onstart = () => {
+      console.log(`[TTS] Début de lecture (Vitesse: ${ttsRate}) : "${pageText.substring(0, 30)}..."`);
+    };
+
+    utterance.onend = () => {
+      console.log("[TTS] Phrase terminée.");
+      clearHighlight();
+      if (useReaderStore.getState().isPlaying) {
+        console.log("[TTS] Changement de page automatique via Epubjs...");
+        renditionRef.current?.next();
+      }
+    };
+
+    utterance.onerror = (e) => {
+      if (e.error === 'interrupted' || e.error === 'canceled') return;
+      console.error("[TTS] Erreur Web Speech API reçue :", e.error, e);
+      setIsPlaying(false);
+    };
+
+    utteranceRef.current = utterance;
+    
+    // On lance la phrase directement ! Chrome/Firefox se débrouille avec la defaultVoice.
+    window.speechSynthesis.speak(utterance);
 
     return () => {
       console.log("[TTS] Cleanup du useEffect (cancel).");
