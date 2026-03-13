@@ -225,9 +225,22 @@ async function openBook(meta) {
         });
 
     let isInitialRelocation = true;
+    let currentChapterHref = '';
+
     rendition.on('relocated', (loc) => {
         currentCfi = loc.start.cfi;
         updateProgress();
+        
+        // --- NOUVEAU : Détection infaillible de changement de chapitre ---
+        if (loc.start.href !== currentChapterHref) {
+            currentChapterHref = loc.start.href;
+            if (!isInitialRelocation) {
+                // Le chapitre a physiquement changé : on RAZ impérativement la progression
+                // intra-page sinon il sautera des phrases au démarrage du nouveau chapitre !
+                localStorage.removeItem(`sentenceIdx_${currentBookId}`);
+                sentenceIdx = 0;
+            }
+        }
         
         if (isInitialRelocation) {
             isInitialRelocation = false;
@@ -262,64 +275,30 @@ async function openBook(meta) {
 async function safeNext() {
     if (!rendition) return;
 
-    // Approche de Perplexity : on ne se base plus sur les pages CSS de l'iframe,
-    // on navigue de CFI en CFI (phrase par phrase) pour forcer le navigateur
-    // à nous afficher le contenu, quel que soit l'overflow du layout.
+    // Suite à tous nos essais (saut spine + prev, calculs CFI absolus, etc)... 
+    // Ils cassaient le swipe manuel (qui voyait des tableaux vides et sautait le chapitre entier).
+    // On retourne à la pureté native de epub.js.
     
-    const lastVis = window.currentLastVisibleSentence;
-    // S'il reste des phrases dans le chapitre (qu'on n'a pas encore vues à l'écran)
-    if (lastVis !== undefined && sentences && textNodes && iframeDoc && lastVis < sentences.length - 1) {
-        const nextIdx = lastVis + 1;
-        const s = sentences[nextIdx];
-        if (s) {
-            let targetNode = null, nodeOffset = 0;
-            for (let tn of textNodes) {
-                if (s.charStart >= tn.start && s.charStart < tn.end) {
-                    targetNode = tn.node; 
-                    nodeOffset = s.charStart - tn.start; 
-                    break;
-                }
-            }
-            if (targetNode) {
-                try {
-                    const locBefore = rendition.currentLocation();
-                    const cfiBefore = locBefore?.start?.cfi;
-                    if (cfiBefore) {
-                        const range = iframeDoc.createRange();
-                        range.setStart(targetNode, nodeOffset);
-                        range.setEnd(targetNode, Math.min(nodeOffset + 1, targetNode.textContent.length));
-                        const cfiBase = cfiBefore.split('!')[0] + '!'; 
-                        const cfiObj = new ePub.CFI(range, cfiBase);
-                        
-                        console.log(`[safeNext] Navigation absolue vers phrase n°${nextIdx}`);
-                        await rendition.display(cfiObj.toString());
-                        return;
-                    }
-                } catch(e) { console.error('Erreur navigation CFI absolue:', e); }
-            }
-        }
-    }
+    const locBefore = rendition.currentLocation();
+    const cfiBefore = locBefore?.start?.cfi;
+    
+    await rendition.next();
 
-    // Si on arrive ici, c'est qu'on a vu absolument TOUTES les phrases du chapitre affichées.
-    // L'overflow n'est plus un problème, le chapitre est vraiment fini. On force le suivant !
-    try {
-        const locBefore = rendition.currentLocation();
-        const cfiBefore = locBefore?.start?.cfi;
-        if (cfiBefore) {
+    const locAfter = rendition.currentLocation();
+    const cfiAfter = locAfter?.start?.cfi;
+
+    // Protection anti-écran-gelé : 
+    // Si apres avoir cliqué "suivant", l'écran n'a STRICTEMENT pas bougé d'un seul pixel CFI,
+    // c'est que l'engine Epub.js est mort bloqué en fin de section. On débloque.
+    if (cfiBefore && cfiAfter && cfiBefore === cfiAfter) {
+        try {
             const spineItem = currentBook.spine.get(cfiBefore);
             if (spineItem) {
                 const nextItem = currentBook.spine.get(spineItem.index + 1);
-                if (nextItem) {
-                    console.log('[safeNext] Fin absolue du chapitre atteinte, on charge le suivant');
-                    await rendition.display(nextItem.href);
-                    return;
-                }
+                if (nextItem) await rendition.display(nextItem.href);
             }
-        }
-    } catch(e) { console.error('Erreur de saut spine terminal:', e); }
-
-    // Ultime roue de secours en dernier recours 
-    rendition.next();
+        } catch(e) {}
+    }
 }
 
 // ─── Swipe gesture support ────────────────────────────────────────────────────
