@@ -9,13 +9,13 @@ function App() {
   const bookId = useReaderStore((state) => state.bookId);
 
   return (
-    <div className="w-full h-full flex flex-col">
+    <div style={{width:'100%', height:'100vh', display:'flex', flexDirection:'column'}}>
       {!epubUrl ? (
         <FileUploader />
       ) : (
         <>
           <ReaderControls />
-          <div className="flex-1 relative">
+          <div style={{flex:1, position:'relative', overflow:'hidden'}}>
             <Reader epubUrl={epubUrl} bookId={bookId} />
           </div>
         </>

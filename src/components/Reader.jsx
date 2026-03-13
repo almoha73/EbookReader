@@ -258,21 +258,22 @@ const Reader = ({ epubUrl, bookId }) => {
   }, []);
 
   return (
-    <div className="w-full h-full relative flex items-center justify-center bg-gray-100 dark:bg-gray-900 pb-[10vh]">
+    <div style={{width:'100%', height:'100%', position:'relative', background:'#f3f4f6'}}>
+      {/* Le viewer epub.js : hauteur 100% explicitement pour que epub.js le mesure correctement */}
       <div 
         ref={viewerRef} 
-        className="w-full h-full max-w-4xl mx-auto shadow-sm bg-white dark:bg-[#121212]"
-      ></div>
+        style={{width:'100%', height:'100%', background:'white'}}
+      />
       
-      {/* Boutons transparents superposés pour tourner la page manuellement */}
+      {/* Zones de tap pour tourner la page manuellement */}
       <div 
         title="Page Précédente"
-        className="absolute top-0 left-0 w-[20%] h-full cursor-pointer z-10" 
+        style={{position:'absolute', top:0, left:0, width:'20%', height:'100%', zIndex:10, cursor:'pointer'}}
         onClick={() => { setIsPlaying(false); renditionRef.current?.prev(); }}
       />
       <div 
         title="Page Suivante"
-        className="absolute top-0 right-0 w-[20%] h-full cursor-pointer z-10" 
+        style={{position:'absolute', top:0, right:0, width:'20%', height:'100%', zIndex:10, cursor:'pointer'}}
         onClick={() => { setIsPlaying(false); renditionRef.current?.next(); }}
       />
     </div>
