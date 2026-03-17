@@ -90,27 +90,11 @@ export function useTTS() {
         audioCtxRef.current = ctx; silentSourceRef.current = src;
       }
     } catch (_) {}
-
-    // 2. Trick HTML5 Audio (Indispensable pour Chrome/Safari Mobile modernes)
-    try {
-      const audioEl = document.getElementById('keepAliveAudio');
-      if (audioEl) {
-        audioEl.play().catch(() => {});
-      }
-    } catch (_) {}
   }, []);
 
   const stopSilentKeepAlive = useCallback(() => {
     try { silentSourceRef.current?.stop(); audioCtxRef.current?.close(); } catch (_) {}
     audioCtxRef.current = silentSourceRef.current = null;
-    
-    try {
-      const audioEl = document.getElementById('keepAliveAudio');
-      if (audioEl) {
-        audioEl.pause();
-        audioEl.currentTime = 0;
-      }
-    } catch (_) {}
   }, []);
 
   // ── Surlignage Sécurisé (DOM <mark>) ────────────────────────────────────
