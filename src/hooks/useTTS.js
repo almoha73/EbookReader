@@ -383,6 +383,55 @@ export function useTTS() {
 
   const playFrom = useCallback((idx) => { stop(); setTimeout(() => play(idx), 100); }, [stop, play]);
 
+  // ── Session Audio & Contrôles écran de verrouillage ───────────────────
+  useEffect(() => {
+    if ('mediaSession' in navigator) {
+      const state = useReaderStore.getState();
+      const title = state.currentChapter || state.currentBook?.title || 'Lecture en cours';
+      const author = state.currentBook?.author || 'EbookReader';
+      const coverUrl = state.currentBook?.coverUrl || '';
+
+      navigator.mediaSession.metadata = new window.MediaMetadata({
+        title: title,
+        artist: author,
+        artwork: coverUrl ? [{ src: coverUrl, sizes: '512x512', type: 'image/jpeg' }, { src: coverUrl, sizes: '512x512', type: 'image/png' }] : []
+      });
+
+      navigator.mediaSession.setActionHandler('play', resume);
+      navigator.mediaSession.setActionHandler('pause', pause);
+
+      navigator.mediaSession.setActionHandler('previoustrack', () => {
+        const prevIdx = Math.max(0, sentenceIdxRef.current - 1);
+        playFrom(prevIdx);
+      });
+
+      navigator.mediaSession.setActionHandler('nexttrack', () => {
+        const nextIdx = sentenceIdxRef.current + 1;
+        if (nextIdx < sentencesRef.current.length) {
+          playFrom(nextIdx);
+        } else {
+          onPageEndRef.current?.();
+        }
+      });
+    }
+  }, [resume, pause, playFrom]);
+
+  // ── Watchdog de reprise en sortie de veille ─────────────────────────────
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      // Si la page redevient visible et qu'on est censé jouer mais que le synthétiseur s'est tu
+      if (!document.hidden && isPlayingRef.current && !isPausedRef.current) {
+        const synth = window.speechSynthesis;
+        if (!synth.speaking && !synth.pending) {
+           console.log('[TTS] Audio suspendu pendant la veille, reprise forcée...');
+           resume();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [resume]);
+
   useEffect(() => {
     return () => {
       synthRef.current.cancel();
