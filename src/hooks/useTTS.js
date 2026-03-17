@@ -53,6 +53,7 @@ export function useTTS() {
   const recoveryTimerRef     = useRef(null);
   const audioCtxRef          = useRef(null);
   const silentSourceRef      = useRef(null);
+  const silentHtmlAudioRef   = useRef(null); // Force HTML5 Media playback (for aggressive OSes)
   const onPageEndRef         = useRef(null);
   const autoScrollEnabledRef   = useRef(true);
   const scrollAnimRef          = useRef(null);
@@ -78,20 +79,42 @@ export function useTTS() {
 
   // ── Keep-alive audio ─────────────────────────────────────────────────
   const startSilentKeepAlive = useCallback(() => {
+    // 1. Trick Web Audio API
     try {
-      if (audioCtxRef.current) return;
-      const ctx = new (window.AudioContext || window.webkitAudioContext)();
-      const buf = ctx.createBuffer(1, ctx.sampleRate * 3, ctx.sampleRate);
-      const src = ctx.createBufferSource();
-      src.buffer = buf; src.loop = true;
-      src.connect(ctx.destination); src.start(0);
-      audioCtxRef.current = ctx; silentSourceRef.current = src;
+      if (!audioCtxRef.current) {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const buf = ctx.createBuffer(1, ctx.sampleRate * 3, ctx.sampleRate);
+        const src = ctx.createBufferSource();
+        src.buffer = buf; src.loop = true;
+        src.connect(ctx.destination); src.start(0);
+        audioCtxRef.current = ctx; silentSourceRef.current = src;
+      }
+    } catch (_) {}
+
+    // 2. Trick HTML5 Audio (Indispensable pour Chrome/Safari Mobile modernes)
+    try {
+      if (!silentHtmlAudioRef.current) {
+        // Base64 d'un MP3 totalement silencieux de 10ms
+        const silentMp3 = 'data:audio/mp3;base64,//OExAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq';
+        const audio = new window.Audio(silentMp3);
+        audio.loop = true;
+        audio.volume = 0.01;
+        silentHtmlAudioRef.current = audio;
+      }
+      silentHtmlAudioRef.current.play().catch(() => {});
     } catch (_) {}
   }, []);
 
   const stopSilentKeepAlive = useCallback(() => {
     try { silentSourceRef.current?.stop(); audioCtxRef.current?.close(); } catch (_) {}
     audioCtxRef.current = silentSourceRef.current = null;
+    
+    try {
+      if (silentHtmlAudioRef.current) {
+        silentHtmlAudioRef.current.pause();
+        silentHtmlAudioRef.current.currentTime = 0;
+      }
+    } catch (_) {}
   }, []);
 
   // ── Surlignage Sécurisé (DOM <mark>) ────────────────────────────────────
