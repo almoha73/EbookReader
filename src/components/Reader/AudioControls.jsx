@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useReaderStore } from '../../store/readerStore';
 
-export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, sentenceCount, sentenceIdx, cfi }) {
+export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, sentenceCount, sentenceIdx, localChapterIdx, totalChapters, cfi }) {
   const { preferences, setPreference, showToast, currentBook } = useReaderStore();
   const [voices, setVoices] = useState([]);
   const [showVoices, setShowVoices] = useState(false);
@@ -24,7 +24,26 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, s
   const isPlaying = ttsState === 'playing';
   const isPaused = ttsState === 'paused';
   const isActive = isPlaying || isPaused;
-  const progress = sentenceCount > 0 ? (sentenceIdx / sentenceCount) * 100 : 0;
+  
+  // Progression interne de la phrase (0-100)
+  const sentenceProgress = sentenceCount > 0 ? (sentenceIdx / sentenceCount) * 100 : 0;
+  
+  // Progression globale estimée (% du livre)
+  const chapterProgressFraction = sentenceCount > 0 ? (sentenceIdx / sentenceCount) : 0;
+  
+  // Pour éviter de démarrer à 10% (car l'EPUB saute souvent les pages de couverture 0 et 1)
+  // On considère que le vrai début du texte est le chapitre actuel s'il est très inférieur à la moitié.
+  // Une astuce simple : on normalise par rapport aux chapitres *restants*.
+  // Mais plus sûrement, on affiche juste la progression brute moins un offset si on est au tout début.
+  let rawProgress = totalChapters > 0 ? ((localChapterIdx + chapterProgressFraction) / totalChapters) * 100 : 0;
+  
+  // Si on est dans le premier quart du livre, on adoucit la courbe pour démarrer visuellement proche de 0%
+  if (localChapterIdx < 3 && totalChapters > 5) {
+     rawProgress = (chapterProgressFraction / (totalChapters - localChapterIdx)) * 100;
+  }
+  
+  const totalProgress = Math.min(100, Math.max(0, rawProgress));
+  const showTotalProgress = totalChapters > 0;
 
   const handleSaveBookmark = () => {
     if (cfi) {
@@ -36,40 +55,55 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, s
 
   return (
     <div className="glass-panel mx-2 mb-2 mt-1 px-4 py-3">
-      {/* Barre de progression interactive des phrases */}
+      {/* Accordéon pour le téléprompteur */}
       {isActive && sentenceCount > 0 && (
-        <div className="mb-3">
-          <div className="flex justify-between text-xs text-dark-400 mb-2">
-            <span>Phrase {sentenceIdx + 1} / {sentenceCount}</span>
-            <span className="font-mono">{Math.round(progress)}%</span>
-          </div>
+        <details className="mb-3 group cursor-pointer marker:text-transparent">
+          <summary className="flex items-center justify-between text-xs text-dark-400 mb-1 hover:text-white transition-colors list-none select-none">
+            <div className="flex items-center gap-1.5 [&::-webkit-details-marker]:hidden">
+              <svg className="w-4 h-4 transform transition-transform group-open:rotate-90 text-dark-400 group-hover:text-white" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd"/>
+              </svg>
+              <span>Navigation (Phrase {sentenceIdx + 1}/{sentenceCount})</span>
+            </div>
+            {showTotalProgress && (
+               <span className="font-mono bg-white/10 px-2 py-0.5 rounded text-[10px] text-white/80">
+                 Livre : {totalProgress.toFixed(1)}%
+               </span>
+            )}
+          </summary>
           
-          <div className="relative w-full flex items-center group h-2">
-            {/* Input range invisible mais cliquable par dessus la jauge */}
-            <input
-              type="range"
-              min="0"
-              max={Math.max(0, sentenceCount - 1)}
-              value={sentenceIdx}
-              onChange={(e) => onSeek?.(parseInt(e.target.value, 10))}
-              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 m-0"
-              title="Avancer/Reculer dans le texte"
-              aria-label="Progression de la lecture"
-            />
-            {/* Fond de la jauge */}
-            <div className="absolute inset-0 w-full h-1 my-auto bg-dark-500 rounded-full overflow-hidden">
-              {/* Remplissage de la jauge */}
-              <div
-                className="h-full bg-gradient-to-r from-brand-600 to-brand-400 rounded-full transition-all duration-300"
-                style={{ width: `${progress}%` }}
+          <div className="pt-2 pb-1 cursor-default">
+            <div className="relative w-full flex items-center group/range h-2">
+              <input
+                type="range"
+                min="0"
+                max={Math.max(0, sentenceCount - 1)}
+                value={sentenceIdx}
+                onChange={(e) => onSeek?.(parseInt(e.target.value, 10))}
+                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 m-0"
+                title="Sauter à une phrase"
+              />
+              <div className="absolute inset-0 w-full h-1 my-auto bg-dark-500 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-gradient-to-r from-brand-600 to-brand-400 rounded-full transition-all duration-300"
+                  style={{ width: `${sentenceProgress}%` }}
+                />
+              </div>
+              <div 
+                className="absolute h-3 w-3 bg-white rounded-full shadow-md transform -translate-x-1/2 transition-transform duration-200 group-hover/range:scale-125"
+                style={{ left: `${sentenceProgress}%`, pointerEvents: 'none' }}
               />
             </div>
-            {/* Curseur visuel (thumb) */}
-            <div 
-              className="absolute h-3 w-3 bg-white rounded-full shadow-md transform -translate-x-1/2 transition-transform duration-200 group-hover:scale-125"
-              style={{ left: `${progress}%`, pointerEvents: 'none' }}
-            />
           </div>
+        </details>
+      )}
+
+      {/* Affichage direct de la progression quand le lecteur est arrêté */}
+      {(!isActive || sentenceCount === 0) && showTotalProgress && (
+        <div className="flex justify-end mb-2">
+          <span className="font-mono bg-white/10 px-2 py-0.5 rounded text-[10px] text-dark-300">
+             Progression livre : {totalProgress.toFixed(1)}%
+          </span>
         </div>
       )}
 

@@ -27,7 +27,7 @@ export default function BookCard({ book, onOpen, onRemove }) {
           <img
             src={book.coverUrl}
             alt={`Couverture: ${book.title}`}
-            className="w-full h-full object-cover"
+            className="w-full h-full object-contain bg-black/40"
           />
         ) : (
           <div className="flex flex-col items-center gap-2 p-4 text-center">

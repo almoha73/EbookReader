@@ -189,6 +189,8 @@ export default function EpubViewer({ book }) {
         onSeek={playFrom}
         sentenceCount={sentences.length}
         sentenceIdx={sentenceIdx}
+        localChapterIdx={localChapterIdx}
+        totalChapters={totalChapters}
         cfi={`ch${localChapterIdx + 1}/${totalChapters}`}
       />
 
