@@ -1,6 +1,4 @@
 // src/hooks/useTTS.js
-// Moteur TTS simplifié : pas de scroll pendant la lecture, pas de mutation DOM
-// Le surlignage utilise window.getSelection() — simple et fiable dans le DOM principal
 
 import { useCallback, useRef, useEffect } from 'react';
 import { useReaderStore } from '../store/readerStore';
@@ -11,12 +9,10 @@ import { useReaderStore } from '../store/readerStore';
 
 function splitIntoSentences(text) {
   if (!text?.trim()) return [];
-  // Découpage après ponctuation forte, avant majuscule ou guillemet ouvrant
   const raw = text.split(/(?<=[.!?…»])\s+(?=[A-ZÁÀÂÉÈÊËÎÏÔÙÛÜÇŒÆ«"—\-\d])/u);
   return raw.map(s => s.trim()).filter(s => s.length > 3);
 }
 
-// Retourne TOUS les nœuds texte du conteneur (pour lecture en scroll continu)
 function extractAllTextNodes(container) {
   if (!container) return [];
   const nodes = [];
@@ -27,7 +23,6 @@ function extractAllTextNodes(container) {
       return NodeFilter.FILTER_ACCEPT;
     }
   });
-
   let node;
   while ((node = walker.nextNode())) {
     nodes.push({ node, text: node.textContent, length: node.textContent.length });
@@ -47,19 +42,39 @@ export function useTTS() {
     preferences, showToast,
   } = useReaderStore();
 
-  const synthRef         = useRef(window.speechSynthesis);
-  const isPlayingRef     = useRef(false);
-  const isPausedRef      = useRef(false);
-  const sentenceIdxRef   = useRef(0);
-  const sentencesRef     = useRef([]);
-  const sentencesMetaRef = useRef([]);
-  const allNodesRef      = useRef([]);
-  const recoveryTimerRef = useRef(null);
-  const audioCtxRef      = useRef(null);
-  const silentSourceRef  = useRef(null);
-  const onPageEndRef     = useRef(null);
+  const synthRef             = useRef(window.speechSynthesis);
+  const isPlayingRef         = useRef(false);
+  const isPausedRef          = useRef(false);
+  const sentenceIdxRef       = useRef(0);
+  const sentencesRef         = useRef([]);
+  const sentencesMetaRef     = useRef([]);
+  const allNodesRef          = useRef([]);
+  const currentSentenceYRef  = useRef(0); // Position Y absolue de la phrase en cours
+  const recoveryTimerRef     = useRef(null);
+  const audioCtxRef          = useRef(null);
+  const silentSourceRef      = useRef(null);
+  const onPageEndRef         = useRef(null);
+  const autoScrollEnabledRef   = useRef(true);
+  const scrollAnimRef          = useRef(null);
+  const isProgrammaticScrollRef = useRef(false);
+  const reEnableScrollTimerRef = useRef(null); // Timer pour réactiver l'auto-scroll
+  const currentMarkRef         = useRef(null);  // Élément <mark> actuellement injecté
 
   const setOnPageEnd = useCallback((fn) => { onPageEndRef.current = fn; }, []);
+
+  // Désactive l'auto-scroll sur interaction utilisateur,
+  // puis le réactive automatiquement après 3 secondes d'inactivité.
+  const disableAutoScroll = useCallback(() => {
+    if (isProgrammaticScrollRef.current) return;
+    autoScrollEnabledRef.current = false;
+    // Annuler le timer précédent et en repartir un nouveau
+    if (reEnableScrollTimerRef.current) clearTimeout(reEnableScrollTimerRef.current);
+    if (isPlayingRef.current && !isPausedRef.current) {
+      reEnableScrollTimerRef.current = setTimeout(() => {
+        autoScrollEnabledRef.current = true;
+      }, 3000);
+    }
+  }, []);
 
   // ── Keep-alive audio ─────────────────────────────────────────────────
   const startSilentKeepAlive = useCallback(() => {
@@ -79,10 +94,27 @@ export function useTTS() {
     audioCtxRef.current = silentSourceRef.current = null;
   }, []);
 
-  // ── Surlignage via Selection API ─────────────────────────────────────
-  // window.getSelection() fonctionne parfaitement dans le DOM principal (pas d'iframe)
+  // ── Surlignage Sécurisé (DOM <mark>) ────────────────────────────────────
+  // On remplace le texte temporairement sans perdre les offsets originaux
   const clearHighlight = useCallback(() => {
-    try { window.getSelection()?.removeAllRanges(); } catch (_) {}
+    try {
+      const marks = currentMarkRef.current;
+      if (!marks) return;
+      const list = Array.isArray(marks) ? marks : [marks];
+      
+      list.forEach(mark => {
+        if (mark?.parentNode) {
+          const parent = mark.parentNode;
+          // Restaurer le contenu textuel exact à la place de la balise mark
+          while (mark.firstChild) parent.insertBefore(mark.firstChild, mark);
+          parent.removeChild(mark);
+        }
+      });
+      
+      // On regroupe les noeuds splités pour que allNodesRef reste valide
+      // On normalise SEULEMENT le conteneur principal à la volée avant la prochaine extraction
+    } catch (_) {}
+    currentMarkRef.current = null;
   }, []);
 
   const highlightSentence = useCallback((idx) => {
@@ -91,73 +123,111 @@ export function useTTS() {
     const sentMeta = sentencesMetaRef.current[idx];
     if (!sentMeta) return;
 
+    // Normaliser avant d'extraire (fusionne proprement les restes du clearHighlight précédent)
+    const container = useReaderStore.getState().contentEl;
+    if (!container) return;
+    
+    // On extrait toujours des noeuds "frais" et propres
+    container.normalize();
+    const freshNodes = extractAllTextNodes(container);
+
     const { start, length } = sentMeta;
     const globalEnd = start + length;
-    const nodes = allNodesRef.current;
-    let startNode = null, startOffset = 0, endNode = null, endOffset = 0;
     let offset = 0;
+    const marks = [];
 
-    for (let i = 0; i < nodes.length; i++) {
-      const len  = nodes[i].length;
-      const ns   = offset;
-      const ne   = offset + len;
+    console.log(`[TTS DEBUG] Sentence ${idx}: start=${start}, globalEnd=${globalEnd}, freshNodes=${freshNodes.length}`);
 
-      if (!startNode && start >= ns && start < ne) {
-        startNode = nodes[i].node; startOffset = start - ns;
-      }
-      if (startNode && globalEnd >= ns && globalEnd <= ne) {
-        endNode = nodes[i].node; endOffset = globalEnd - ns;
-        break;
-      }
-      if (startNode && i === nodes.length - 1) {
-        endNode = nodes[i].node;
-        endOffset = Math.min(len, globalEnd - ns);
+    for (let i = 0; i < freshNodes.length; i++) {
+      const len = freshNodes[i].length;
+      const ns  = offset;
+      const ne  = offset + len;
+
+      if (ne > start && ns < globalEnd) {
+        const localStart = Math.max(0, start - ns);
+        const localEnd   = Math.min(len, globalEnd - ns);
+        
+        console.log(`[TTS DEBUG] Node ${i} MATCH: ns=${ns}, ne=${ne}, localStart=${localStart}, localEnd=${localEnd}, text="${freshNodes[i].text}"`);
+
+        if (localStart < localEnd) {
+          try {
+            const textNode = freshNodes[i].node;
+            const range = document.createRange();
+            range.setStart(textNode, localStart);
+            range.setEnd(textNode, localEnd);
+            
+            const mark = document.createElement('mark');
+            mark.className = 'tts-highlight';
+            range.surroundContents(mark);
+            marks.push(mark);
+          } catch (e) {
+             console.warn('[TTS] highlight node failed:', e.message);
+          }
+        }
       }
       offset += len;
     }
 
-    if (!startNode || !endNode) return;
+    currentMarkRef.current = marks;
 
-    try {
-      const range = document.createRange();
-      range.setStart(startNode, startOffset);
-      range.setEnd(endNode, endOffset);
-      
-      // On s'assure que le conteneur a le focus pour que la sélection native affiche sa couleur complète
-      const container = useReaderStore.getState().contentEl;
-      if (container && document.activeElement !== container) {
-        container.focus({ preventScroll: true });
+    // ── Téléprompteur : centre Y de la phrase ─────────────────────────────
+    if (marks.length > 0 && container) {
+      const rect  = marks[0].getBoundingClientRect();
+      const cRect = container.getBoundingClientRect();
+      // Si on est dans le viewport avec une vraie hauteur (pas caché)
+      if (rect.height > 0) {
+        currentSentenceYRef.current = rect.top - cRect.top + container.scrollTop + rect.height / 2;
       }
-
-      // API CSS Custom Highlight (Chrome 105+)
-      if (typeof CSS !== 'undefined' && CSS.highlights && typeof Highlight !== 'undefined') {
-        window.getSelection()?.removeAllRanges(); // Libérer la sélection native
-        CSS.highlights.set('tts-active', new Highlight(range));
-      } else {
-        // Fallback sélection native
-        const sel = window.getSelection();
-        if (sel) { sel.removeAllRanges(); sel.addRange(range); }
-      }
-
-      // Auto-scroll : on ne ramène JAMAIS l'utilisateur en arrière.
-      // On scrolle vers le bas UNIQUEMENT si l'audio arrive en bas de la vue actuelle.
-      if (container) {
-        const rect = range.getBoundingClientRect();
-        const cRect = container.getBoundingClientRect();
-        
-        const bottomMargin = cRect.height * 0.2; // 20% du bas de l'écran
-        
-        // Si la fin de la phrase touche la marge du bas
-        // ET que la phrase n'est pas "loin" en bas (ex: si vous avez scrollé en haut manuellement)
-        if (rect.bottom > cRect.bottom - bottomMargin && rect.top < cRect.bottom + cRect.height * 0.5) {
-          // On avance doucement l'écran vers le bas
-          container.scrollBy({ top: cRect.height * 0.35, behavior: 'smooth' });
-        }
-      }
-    } catch (e) {
-      console.warn('[TTS] highlight:', e.message);
     }
   }, [clearHighlight]);
+
+  // ── Boucle Téléprompteur ───────────────────────────────────────────────────────
+  // Principe : garder la phrase en cours CENTRÉE verticalement.
+  // Approche : interpolation linéaire (lerp) vers la cible.
+  // Simple, robuste, comporte une décélération naturelle.
+  useEffect(() => {
+    let frameId;
+
+    const teleprompterLoop = () => {
+      frameId = requestAnimationFrame(teleprompterLoop);
+
+      if (!isPlayingRef.current || !autoScrollEnabledRef.current || isPausedRef.current) return;
+
+      const container = useReaderStore.getState().contentEl;
+      if (!container) return;
+
+      // Toujours sécuriser scroll-behavior = auto (pas de transition CSS)
+      container.style.scrollBehavior = 'auto';
+
+      const containerHeight = container.clientHeight;
+      // Cible : phrase centrée dans la fenêtre
+      const targetScroll = Math.max(0, currentSentenceYRef.current - containerHeight / 2);
+      const currentScroll = container.scrollTop;
+      const dist = targetScroll - currentScroll;
+
+      if (Math.abs(dist) < 0.5) return; // Déjà en place
+
+      // Pour les grands sauts (début de lecture, changement de chapitre) → saut immédiat
+      if (Math.abs(dist) > containerHeight * 0.6) {
+        isProgrammaticScrollRef.current = true;
+        container.scrollTop = targetScroll;
+        isProgrammaticScrollRef.current = false;
+        return;
+      }
+
+      // Lerp : se déplacer de 10 % de la distance restante par frame
+      // → décélération naturelle, vitesse adaptée à la distance
+      // Vitesse min 1.5px pour ne pas stagner, vitesse max 80px pour ne pas être brusque
+      const step = Math.sign(dist) * Math.min(Math.max(Math.abs(dist) * 0.10, 1.5), 80);
+
+      isProgrammaticScrollRef.current = true;
+      container.scrollTop = currentScroll + step;
+      isProgrammaticScrollRef.current = false;
+    };
+
+    frameId = requestAnimationFrame(teleprompterLoop);
+    return () => cancelAnimationFrame(frameId);
+  }, []);
 
   // ── Lecture phrase par phrase ─────────────────────────────────────────
   const readSentence = useCallback((idx) => {
@@ -165,7 +235,6 @@ export function useTTS() {
 
     const sents = sentencesRef.current;
     if (idx >= sents.length) {
-      // Fin du chapitre complet → on informe EpubViewer de passer au chapitre suivant
       clearHighlight();
       onPageEndRef.current?.();
       return;
@@ -178,7 +247,6 @@ export function useTTS() {
     const synth = synthRef.current;
     const utt   = new SpeechSynthesisUtterance(text);
 
-    // Voix
     const voices = synth.getVoices();
     const saved  = preferences.voice;
     if (saved) { const v = voices.find(v => v.name === saved); if (v) utt.voice = v; }
@@ -189,22 +257,23 @@ export function useTTS() {
     utt.onend = () => {
       if (!isPlayingRef.current || isPausedRef.current) return;
       if (recoveryTimerRef.current) clearTimeout(recoveryTimerRef.current);
-      // ⚠️ jamais de synth.cancel() depuis onend (gèle Chrome/Linux)
       setTimeout(() => readSentence(idx + 1), 50);
     };
 
     utt.onerror = (e) => {
-      if (e.error === 'interrupted') return;
+      if (e.error === 'interrupted' || e.error === 'canceled') return;
       setTimeout(() => {
         if (isPlayingRef.current && !isPausedRef.current) readSentence(idx);
       }, 300);
     };
 
-    if (synth.speaking || synth.pending) synth.cancel();
+    if (synth.speaking || synth.pending) {
+      // Annuler la voix précédente (essentiel si on change de vitesse)
+      synth.cancel();
+    }
     synth.speak(utt);
     highlightSentence(idx);
 
-    // Garde-fou : si Chrome se fige
     if (recoveryTimerRef.current) clearTimeout(recoveryTimerRef.current);
     const ms = (text.length / 12) * (1 / (utt.rate || 1)) * 1000;
     recoveryTimerRef.current = setTimeout(() => {
@@ -215,16 +284,18 @@ export function useTTS() {
     }, ms + 3000);
   }, [preferences, highlightSentence, clearHighlight, setSentenceIdx]);
 
-  // ── Extraction des phrases du chapitre entier ──────────────────────────
+  // ── Extraction des phrases ─────────────────────────────────────────────
   const refreshSentences = useCallback((autoPlay = false) => {
     const container = useReaderStore.getState().contentEl;
     if (!container) return [];
 
+    // IMPORTANT : effacer le surlignage avant d'extraire les nœuds texte.
+    // Le <mark> injecté modifie la structure du DOM et décalerait les offsets.
+    clearHighlight();
+
     const nodes = extractAllTextNodes(container);
     allNodesRef.current = nodes;
-    console.log('[TTS] refreshSentences: nodes', nodes.length, '| autoPlay', autoPlay);
 
-    // On s'assure que le focus est sur le conteneur pour que getSelection() soit visible
     try { container.focus(); } catch(_) {}
 
     if (nodes.length === 0) {
@@ -237,7 +308,6 @@ export function useTTS() {
     const sents    = splitIntoSentences(fullText);
     sentencesRef.current = sents;
     setSentences(sents);
-    console.log('[TTS] phrases:', sents.length, '| ex:', sents[0]?.slice(0, 40));
 
     const meta = [];
     let searchIdx = 0;
@@ -251,25 +321,25 @@ export function useTTS() {
     setSentenceIdx(0);
 
     if (autoPlay && isPlayingRef.current) {
-      // Annuler ce qui tourne encore avant de relancer sur la nouvelle zone
       if (synthRef.current.speaking || synthRef.current.pending) synthRef.current.cancel();
       setTimeout(() => {
         if (isPlayingRef.current && !isPausedRef.current) readSentence(0);
       }, 50);
     }
     return sents;
-  }, [setSentences, setSentenceIdx, readSentence]);
+  }, [clearHighlight, setSentences, setSentenceIdx, readSentence]);
 
-  // ── Contrôles ────────────────────────────────────────────────────────
+  // ── Contrôles ─────────────────────────────────────────────────────────
   const play = useCallback((fromIdx = 0) => {
     if (!useReaderStore.getState().contentEl) { showToast('⚠️ Livre non chargé'); return; }
     startSilentKeepAlive();
     isPlayingRef.current = true; isPausedRef.current = false;
+    autoScrollEnabledRef.current = true;
     setTtsState('playing');
-    if (sentencesRef.current.length === 0) {
-      const s = refreshSentences(false);
-      if (!s?.length) { showToast('⚠️ Aucun texte trouvé'); setTtsState('idle'); isPlayingRef.current = false; return; }
-    }
+    // Toujours rafraîchir : garantit que allNodesRef est propre et à jour
+    // (crucial après un stop, un changement de chapitre, ou un highlight précédent)
+    const s = refreshSentences(false);
+    if (!s?.length) { showToast('⚠️ Aucun texte trouvé'); setTtsState('idle'); isPlayingRef.current = false; return; }
     readSentence(fromIdx);
   }, [startSilentKeepAlive, setTtsState, refreshSentences, readSentence, showToast]);
 
@@ -281,8 +351,9 @@ export function useTTS() {
 
   const resume = useCallback(() => {
     isPausedRef.current = false; isPlayingRef.current = true;
+    autoScrollEnabledRef.current = true;
     setTtsState('playing');
-    readSentence(sentenceIdxRef.current);
+    readSentence(sentenceIdxRef.current); // readSentence appelle highlightSentence
   }, [setTtsState, readSentence]);
 
   const stop = useCallback(() => {
@@ -297,12 +368,18 @@ export function useTTS() {
   const playFrom = useCallback((idx) => { stop(); setTimeout(() => play(idx), 100); }, [stop, play]);
 
   useEffect(() => {
-    return () => { synthRef.current.cancel(); clearHighlight(); stopSilentKeepAlive(); if (recoveryTimerRef.current) clearTimeout(recoveryTimerRef.current); };
+    return () => {
+      synthRef.current.cancel();
+      clearHighlight();
+      stopSilentKeepAlive();
+      if (recoveryTimerRef.current) clearTimeout(recoveryTimerRef.current);
+    };
   }, [stopSilentKeepAlive, clearHighlight]);
 
   return {
     ttsState, sentences, sentenceIdx,
     play, pause, resume, stop, playFrom,
     refreshSentences, setOnPageEnd, isPlayingRef,
+    disableAutoScroll,
   };
 }

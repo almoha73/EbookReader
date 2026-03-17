@@ -1,13 +1,39 @@
 // src/components/Reader/EpubViewer.jsx
 // Lecteur EPUB avec défilement continu (vertical pur)
 
-import { useEffect, useRef, useCallback, useState } from 'react';
+import { useEffect, useRef, useCallback, useState, memo } from 'react';
 import { useEpubContent } from '../../hooks/useEpubContent';
 import { useTTS } from '../../hooks/useTTS';
 import { useReaderStore } from '../../store/readerStore';
 import AudioControls from './AudioControls';
 import DisplaySettings from './DisplaySettings';
 import NavigationBar from './NavigationBar';
+
+// ── Conteneur HTML Isolé (évite les re-renders et la perte des <mark>) ────
+// Enveloppé dans React.memo pour ne se re-rendre QUE si le HTML ou la taille de police changent.
+// Empêche isPlaying ou sentenceIdx de déclencher un redessin destructeur.
+const EpubHtmlContent = memo(({ currentHtml, fontSize, setContentRefCallback, onScroll, disableAutoScroll, handleNextChapterManual, handlePrevChapterManual }) => {
+  return (
+    <div
+      ref={setContentRefCallback}
+      tabIndex="-1"
+      onScroll={onScroll}
+      onWheel={disableAutoScroll}
+      onTouchMove={disableAutoScroll}
+      onMouseDown={disableAutoScroll}
+      onKeyDown={(e) => {
+        if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Space'].includes(e.code)) {
+          disableAutoScroll();
+        }
+        if (e.key === 'ArrowRight') handleNextChapterManual();
+        if (e.key === 'ArrowLeft') handlePrevChapterManual();
+      }}
+      className="reader-content focus:outline-none"
+      style={{ fontSize: `${fontSize}px` }}
+      dangerouslySetInnerHTML={{ __html: currentHtml }}
+    />
+  );
+});
 
 export default function EpubViewer({ book }) {
   const contentRef    = useRef(null);
@@ -20,13 +46,14 @@ export default function EpubViewer({ book }) {
 
   const {
     isLoading, currentHtml, localChapterIdx, totalChapters, bookMeta,
-    initBook, goNextChapter,
+    initBook, goNextChapter, goPrevChapter,
   } = useEpubContent();
 
   const {
     play, pause, resume, stop, playFrom,
     setOnPageEnd, refreshSentences,
     sentences, sentenceIdx, isPlayingRef,
+    disableAutoScroll,
   } = useTTS();
 
   const setContentRefCallback = useCallback((el) => {
@@ -72,25 +99,44 @@ export default function EpubViewer({ book }) {
     window.speechSynthesis?.cancel();
     const ok = await goNextChapter();
     if (!ok) stop(); // Fin du livre
-    else setTimeout(() => refreshSentences(true), 400);
+    else setTimeout(() => refreshSentences(true), 400); // true = autoPlay
   }, [goNextChapter, stop, refreshSentences]);
 
   useEffect(() => {
     setOnPageEnd(onChapterEnd);
   }, [setOnPageEnd, onChapterEnd]);
 
+  const handleNextChapterManual = useCallback(async (e) => {
+    if (e) e.stopPropagation();
+    window.speechSynthesis?.cancel();
+    stop();
+    await goNextChapter();
+  }, [goNextChapter, stop]);
+
+  const handlePrevChapterManual = useCallback(async (e) => {
+    if (e) e.stopPropagation();
+    window.speechSynthesis?.cancel();
+    stop();
+    await goPrevChapter();
+  }, [goPrevChapter, stop]);
+
   // Détection du scroll manuel (si l'utilisateur lit sans le TTS)
-  const handleScroll = (e) => {
+  // Permet de passer de chapitre en chapitre juste en scrollant !
+  const isTransitioningRef = useRef(false);
+
+  const handleScroll = useCallback(async (e) => {
     const el = e.target;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 20) {
-      // On est arrivé en bas du chapitre manuellement
+    if (isTransitioningRef.current) return;
+
+    // Si on tire vers le bas (défilement continu vers le chapitre suivant)
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 10) {
       if (!isPlayingRef.current) {
-         // Optionnel : on pourrait lancer onChapterEnd() ici.
-         // Mais pour éviter l'avancement accidentel, on peut obliger l'utilisateur
-         // à faire un geste ou laisser le TTS gérer.
+        isTransitioningRef.current = true;
+        await handleNextChapterManual();
+        setTimeout(() => { isTransitioningRef.current = false; }, 800);
       }
     }
-  };
+  }, [handleNextChapterManual, isPlayingRef]);
 
   const handlePlayPause = () => {
     if (ttsState === 'idle')    play(0);
@@ -119,17 +165,18 @@ export default function EpubViewer({ book }) {
             <div className="loading-overlay z-10">
               <div className="spinner-ring"/>
               <span className="loading-emoji">📖</span>
-              <p className="loading-text">Chargement du livre…</p>
+              <p className="loading-text">Chargement du chapitre…</p>
             </div>
           )}
 
-          <div
-            ref={setContentRefCallback}
-            tabIndex="-1"
+          <EpubHtmlContent
+            currentHtml={currentHtml}
+            fontSize={preferences.fontSize}
+            setContentRefCallback={setContentRefCallback}
             onScroll={handleScroll}
-            className="reader-content focus:outline-none"
-            style={{ fontSize: `${preferences.fontSize}px` }}
-            dangerouslySetInnerHTML={{ __html: currentHtml }}
+            disableAutoScroll={disableAutoScroll}
+            handleNextChapterManual={handleNextChapterManual}
+            handlePrevChapterManual={handlePrevChapterManual}
           />
         </div>
 

@@ -289,7 +289,7 @@ html, body, #root {
   color: #dde4f0;
   line-height: 1.8;
   font-family: 'Georgia', 'Palatino', 'Times New Roman', serif;
-  scroll-behavior: smooth;
+  /* PAS de scroll-behavior: smooth ici — le téléprompteur JS gère ça en requestAnimationFrame */
 
   /* Masquer la scrollbar visuellement mais conserver la fonctionnalité */
   scrollbar-width: none;
@@ -332,25 +332,14 @@ html, body, #root {
   border-radius: 6px;
 }
 
-/* Surlignage TTS via la Selection API — dans notre propre DOM, ça marche parfaitement ! */
-.reader-content ::selection {
-  background: var(--highlight-color, rgba(255, 214, 0, 0.45));
-  color: inherit;
+/* Surlignage TTS : élément <mark class="tts-highlight"> injecté dans le DOM */
+/* !important nécessaire pour outrepasser le style jaune natif de <mark> */
+mark.tts-highlight {
+  background-color: var(--highlight-color, rgba(255, 214, 0, 0.55)) !important;
+  color: inherit !important;
+  border-radius: 3px;
+  padding: 0 1px;
 }
-
-/* Surlignage TTS : CSS Custom Highlight API (sans modification du DOM) */
-::highlight(tts-active) {
-  background-color: var(--highlight-color, rgba(255, 214, 0, 0.5));
-  color: inherit;
-}
-
-/* Fallback pour navigateurs ne supportant pas CSS.highlights */
-.reader-content ::selection {
-  background-color: var(--highlight-color, rgba(255, 214, 0, 0.45));
-  color: inherit;
-}
-
-/* Suppression de l'ancienne règle .tts-highlight (plus utilisée) */
 @media (max-width: 600px) {
   .reader-content {
     padding: 20px 20px;

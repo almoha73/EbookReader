@@ -19,6 +19,22 @@ export default function LibraryView() {
     return Math.abs(hash) % 360;
   };
 
+  // Convertit une blob URL en base64 data URL (pour la persistance)
+  const blobUrlToBase64 = async (blobUrl) => {
+    try {
+      const response = await fetch(blobUrl);
+      const blob = await response.blob();
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.onerror = () => resolve(null);
+        reader.readAsDataURL(blob);
+      });
+    } catch {
+      return null;
+    }
+  };
+
   const processEpubFile = async (file) => {
     if (!file?.name?.endsWith('.epub')) {
       showToast('⚠️ Veuillez choisir un fichier .epub');
@@ -32,7 +48,11 @@ export default function LibraryView() {
 
       let coverUrl = null;
       try {
-        coverUrl = await book.coverUrl();
+        const blobUrl = await book.coverUrl();
+        if (blobUrl) {
+          // Convertir en base64 AVANT de détruire le livre (la blob URL est valide jusqu'ici)
+          coverUrl = await blobUrlToBase64(blobUrl);
+        }
       } catch (e) {}
 
       book.destroy();
@@ -43,10 +63,7 @@ export default function LibraryView() {
         author: meta?.creator || '',
         coverUrl,
       };
-      const id = addBook(bookData);
-      // Attacher la teinte de couleur (non persistée, juste pour le rendu)
-      useReaderStore.getState().books.find(b => b.id === id)._hue = getHue(id);
-
+      addBook(bookData);
       showToast(`✅ "${bookData.title}" ajouté à votre bibliothèque`);
     } catch (err) {
       console.error('[Library] Import error:', err);
@@ -175,7 +192,7 @@ export default function LibraryView() {
                 <BookCard
                   key={book.id}
                   book={{ ...book, _hue: getHue(book.id) }}
-                  onOpen={openBook}
+                  onOpen={(b) => openBook(b)} // openBook est async, s'occupe de charger le File si besoin
                   onRemove={removeBook}
                 />
               ))}

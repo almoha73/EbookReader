@@ -3,6 +3,7 @@
 
 import { create } from 'zustand';
 import { saveProgress, loadProgress, savePreferences, loadPreferences, generateBookId } from '../utils/storage';
+import { saveLibraryMeta, loadLibraryMeta, saveEpubFile, loadEpubFile, removeEpubFile } from '../utils/libraryStorage';
 
 const DEFAULT_PREFS = {
   fontSize: 18,
@@ -12,23 +13,67 @@ const DEFAULT_PREFS = {
   theme: 'dark',
 };
 
+// ── Chargement initial de la bibliothèque depuis localStorage ──────────────
+// Les File objects ne sont pas disponibles après un refresh : on les marque "offline"
+// ils seront rechargés depuis IndexedDB à l'ouverture par LibraryView
+const _savedMeta = loadLibraryMeta();
+const _initialBooks = _savedMeta.map(m => ({
+  ...m,
+  file: null, // sera chargé depuis IndexedDB quand on ouvre le livre
+  _loading: false,
+}));
+
 export const useReaderStore = create((set, get) => ({
   // ── Vues ──────────────────────────────────────────────────────────────
   view: 'library',   // 'library' | 'reader'
   setView: (view) => set({ view }),
 
   // ── Bibliothèque ──────────────────────────────────────────────────────
-  books: [],
+  books: _initialBooks,
   currentBook: null,
 
   addBook: (bookData) => {
     const id = generateBookId(bookData.file.name);
     const book = { ...bookData, id, addedAt: Date.now() };
-    set(state => ({ books: [...state.books.filter(b => b.id !== id), book] }));
+    set(state => {
+      const books = [...state.books.filter(b => b.id !== id), book];
+      saveLibraryMeta(books);
+      return { books };
+    });
+    // Sauvegarder le binaire EPUB dans IndexedDB
+    saveEpubFile(id, bookData.file).catch(console.error);
     return id;
   },
-  removeBook: (id) => set(state => ({ books: state.books.filter(b => b.id !== id) })),
-  openBook: (book) => set({ currentBook: book, view: 'reader' }),
+
+  removeBook: (id) => {
+    set(state => {
+      const books = state.books.filter(b => b.id !== id);
+      saveLibraryMeta(books);
+      return { books };
+    });
+    removeEpubFile(id).catch(console.error);
+  },
+
+  // Charge le File depuis IndexedDB si nécessaire puis ouvre le livre
+  openBook: async (book) => {
+    let fileBook = book;
+    if (!book.file) {
+      // Récupérer le binaire depuis IndexedDB
+      const filename = `${book.id}.epub`;
+      const file = await loadEpubFile(book.id, book.title ? `${book.title}.epub` : filename);
+      if (!file) {
+        get().showToast('❌ Fichier introuvable — réimportez ce livre');
+        return;
+      }
+      fileBook = { ...book, file };
+      // Mettre à jour la référence dans le store
+      set(state => ({
+        books: state.books.map(b => b.id === book.id ? fileBook : b),
+      }));
+    }
+    set({ currentBook: fileBook, view: 'reader' });
+  },
+
   closeBook: () => set({ currentBook: null, view: 'library' }),
 
   // ── État du lecteur ───────────────────────────────────────────────────
