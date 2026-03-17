@@ -30,6 +30,9 @@ export default function App() {
 
       {/* Toast notification globale */}
       <Toast />
+
+      {/* Audio fantôme pour forcer iOS/Android à maintenir l'application active en arrière-plan */}
+      <audio id="keepAliveAudio" src="/silence.wav" preload="auto" loop playsInline />
     </div>
   );
 }

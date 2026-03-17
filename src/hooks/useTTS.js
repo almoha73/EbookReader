@@ -93,15 +93,10 @@ export function useTTS() {
 
     // 2. Trick HTML5 Audio (Indispensable pour Chrome/Safari Mobile modernes)
     try {
-      if (!silentHtmlAudioRef.current) {
-        // Base64 d'un MP3 totalement silencieux de 10ms
-        const silentMp3 = 'data:audio/mp3;base64,//OExAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq';
-        const audio = new window.Audio(silentMp3);
-        audio.loop = true;
-        audio.volume = 0.01;
-        silentHtmlAudioRef.current = audio;
+      const audioEl = document.getElementById('keepAliveAudio');
+      if (audioEl) {
+        audioEl.play().catch(() => {});
       }
-      silentHtmlAudioRef.current.play().catch(() => {});
     } catch (_) {}
   }, []);
 
@@ -110,9 +105,10 @@ export function useTTS() {
     audioCtxRef.current = silentSourceRef.current = null;
     
     try {
-      if (silentHtmlAudioRef.current) {
-        silentHtmlAudioRef.current.pause();
-        silentHtmlAudioRef.current.currentTime = 0;
+      const audioEl = document.getElementById('keepAliveAudio');
+      if (audioEl) {
+        audioEl.pause();
+        audioEl.currentTime = 0;
       }
     } catch (_) {}
   }, []);
