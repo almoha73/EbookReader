@@ -12,13 +12,13 @@ import NavigationBar from './NavigationBar';
 // ── Conteneur HTML Isolé (évite les re-renders et la perte des <mark>) ────
 // Enveloppé dans React.memo pour ne se re-rendre QUE si le HTML ou la taille de police changent.
 // Empêche isPlaying ou sentenceIdx de déclencher un redessin destructeur.
-const EpubHtmlContent = memo(({ currentHtml, fontSize, setContentRefCallback, onScroll, disableAutoScroll, handleNextChapterManual, handlePrevChapterManual }) => {
+const EpubHtmlContent = memo(({ currentHtml, fontSize, setContentRefCallback, onScroll, onWheel, disableAutoScroll, handleNextChapterManual, handlePrevChapterManual }) => {
   return (
     <div
       ref={setContentRefCallback}
       tabIndex="-1"
       onScroll={onScroll}
-      onWheel={disableAutoScroll}
+      onWheel={onWheel}
       onTouchMove={disableAutoScroll}
       onMouseDown={disableAutoScroll}
       onKeyDown={(e) => {
@@ -45,7 +45,7 @@ export default function EpubViewer({ book }) {
   } = useReaderStore();
 
   const {
-    isLoading, currentHtml, localChapterIdx, totalChapters, bookMeta,
+    isLoading, currentHtml, localChapterIdx, totalChapters, chapterWeights, bookMeta,
     initBook, goNextChapter, goPrevChapter,
   } = useEpubContent();
 
@@ -124,19 +124,33 @@ export default function EpubViewer({ book }) {
   // Permet de passer de chapitre en chapitre juste en scrollant !
   const isTransitioningRef = useRef(false);
 
-  const handleScroll = useCallback(async (e) => {
-    const el = e.target;
-    if (isTransitioningRef.current) return;
+  const checkScrollTransition = useCallback(async (direction, el) => {
+    if (isTransitioningRef.current || isPlayingRef.current) return;
 
-    // Si on tire vers le bas (défilement continu vers le chapitre suivant)
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 10) {
-      if (!isPlayingRef.current) {
-        isTransitioningRef.current = true;
-        await handleNextChapterManual();
-        setTimeout(() => { isTransitioningRef.current = false; }, 800);
-      }
+    if (direction === 'down' && el.scrollHeight - el.scrollTop - el.clientHeight < 10) {
+      isTransitioningRef.current = true;
+      await handleNextChapterManual();
+      setTimeout(() => { isTransitioningRef.current = false; }, 800);
+    } else if (direction === 'up' && el.scrollTop <= 0) {
+      isTransitioningRef.current = true;
+      await handlePrevChapterManual();
+      setTimeout(() => { isTransitioningRef.current = false; }, 800);
     }
-  }, [handleNextChapterManual, isPlayingRef]);
+  }, [handleNextChapterManual, handlePrevChapterManual, isPlayingRef]);
+
+  const handleScroll = useCallback((e) => {
+    // Le onScroll natif détecte surtout le scroll vers le bas car on force le scrollTop au chapitre précédent.
+    checkScrollTransition('down', e.target);
+    if (e.target.scrollTop === 0) checkScrollTransition('up', e.target);
+  }, [checkScrollTransition]);
+
+  const handleWheel = useCallback((e) => {
+    disableAutoScroll();
+    if (!contentRef.current) return;
+    // Si la page est trop courte pour scroller, ou qu'on force la molette aux extrémités:
+    if (e.deltaY > 0) checkScrollTransition('down', contentRef.current);
+    else if (e.deltaY < 0) checkScrollTransition('up', contentRef.current);
+  }, [disableAutoScroll, checkScrollTransition]);
 
   const handlePlayPause = () => {
     if (ttsState === 'idle')    play(0);
@@ -174,6 +188,7 @@ export default function EpubViewer({ book }) {
             fontSize={preferences.fontSize}
             setContentRefCallback={setContentRefCallback}
             onScroll={handleScroll}
+            onWheel={handleWheel}
             disableAutoScroll={disableAutoScroll}
             handleNextChapterManual={handleNextChapterManual}
             handlePrevChapterManual={handlePrevChapterManual}
@@ -191,6 +206,7 @@ export default function EpubViewer({ book }) {
         sentenceIdx={sentenceIdx}
         localChapterIdx={localChapterIdx}
         totalChapters={totalChapters}
+        chapterWeights={chapterWeights}
         cfi={`ch${localChapterIdx + 1}/${totalChapters}`}
       />
 

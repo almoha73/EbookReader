@@ -4,7 +4,7 @@
 import { useState, useEffect } from 'react';
 import { useReaderStore } from '../../store/readerStore';
 
-export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, sentenceCount, sentenceIdx, localChapterIdx, totalChapters, cfi }) {
+export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, sentenceCount, sentenceIdx, localChapterIdx, totalChapters, chapterWeights, cfi }) {
   const { preferences, setPreference, showToast, currentBook } = useReaderStore();
   const [voices, setVoices] = useState([]);
   const [showVoices, setShowVoices] = useState(false);
@@ -28,18 +28,19 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, s
   // Progression interne de la phrase (0-100)
   const sentenceProgress = sentenceCount > 0 ? (sentenceIdx / sentenceCount) * 100 : 0;
   
-  // Progression globale estimée (% du livre)
+  // Progression globale estimée (% du livre) fraction de la phrase actuelle
   const chapterProgressFraction = sentenceCount > 0 ? (sentenceIdx / sentenceCount) : 0;
   
-  // Pour éviter de démarrer à 10% (car l'EPUB saute souvent les pages de couverture 0 et 1)
-  // On considère que le vrai début du texte est le chapitre actuel s'il est très inférieur à la moitié.
-  // Une astuce simple : on normalise par rapport aux chapitres *restants*.
-  // Mais plus sûrement, on affiche juste la progression brute moins un offset si on est au tout début.
-  let rawProgress = totalChapters > 0 ? ((localChapterIdx + chapterProgressFraction) / totalChapters) * 100 : 0;
+  let rawProgress = 0;
   
-  // Si on est dans le premier quart du livre, on adoucit la courbe pour démarrer visuellement proche de 0%
-  if (localChapterIdx < 3 && totalChapters > 5) {
-     rawProgress = (chapterProgressFraction / (totalChapters - localChapterIdx)) * 100;
+  // Utilisation des poids réels calculés en background (précision au caractère près)
+  if (chapterWeights && chapterWeights.offsets.length > localChapterIdx) {
+    const offset = chapterWeights.offsets[localChapterIdx];      // ex: 0.12 (12%)
+    const weight = chapterWeights.weights[localChapterIdx] || 0; // ex: 0.05 (5%)
+    rawProgress = (offset + (chapterProgressFraction * weight)) * 100;
+  } else {
+    // Fallback pendant les 2 premières secondes de calcul background
+    rawProgress = totalChapters > 0 ? ((localChapterIdx + chapterProgressFraction) / totalChapters) * 100 : 0;
   }
   
   const totalProgress = Math.min(100, Math.max(0, rawProgress));

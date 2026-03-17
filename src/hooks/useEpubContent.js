@@ -81,6 +81,51 @@ export function useEpubContent() {
   const [localChapterIdx, setLocalChapterIdx] = useState(0);
   const [totalChapters,   setTotalChapters]   = useState(0);
   const [bookMeta,        setBookMeta]        = useState(null);
+  
+  // Weights for ultra-precise progress calculation
+  const [chapterWeights,  setChapterWeights]  = useState({ offsets: [], weights: [], total: 0 });
+
+  // ── Calcule le poids textuel brut de chaque chapitre sans bloquer l'UI ni crasher la RAM ──
+  const computeChapterWeights = async (chaps, bookObj) => {
+    let total = 0;
+    const weights = new Array(chaps.length).fill(100);
+    const offsets = new Array(chaps.length).fill(0);
+    
+    // Pour chaque chapitre, récupérer le texte brut sans le mettre en cache
+    for (let i = 0; i < chaps.length; i++) {
+        try {
+            const item = bookObj.spine.get(chaps[i].spineIdx);
+            
+            // Évite item.load() qui garde le document en RAM (provoquant des crashs React)
+            // Passe direct via book.load qui retourne le Document XML, qu'on lit, puis qui est garbagé
+            let textLen = 50;
+            if (item.href) {
+               const doc = await bookObj.load(item.href);
+               const body = doc?.querySelector?.('body') ?? doc?.getElementsByTagName?.('body')?.[0] ?? doc;
+               textLen = body?.textContent?.length || 50;
+            }
+            
+            const size = Math.max(textLen, 10);
+            weights[i] = size;
+            total += size;
+        } catch(e) {
+            weights[i] = 100;
+            total += 100;
+        }
+        // Attendre 20ms entre chaque chapitre pour laisser le navigateur souffler (évite le freeze)
+        await new Promise(r => setTimeout(r, 20));
+    }
+    
+    // Normaliser en pourcentages stricts
+    let cum = 0;
+    for (let i = 0; i < chaps.length; i++) {
+       offsets[i] = cum / total;
+       weights[i] = weights[i] / total;
+       cum += weights[i] * total;
+    }
+    
+    setChapterWeights({ offsets, weights, total });
+  };
 
   // ── Charge un chapitre par index ───────────────────────────────────────
   const loadChapter = useCallback(async (idx) => {
@@ -186,6 +231,9 @@ export function useEpubContent() {
         return null;
       }
 
+      // Lancer le calcul du poids de chaque chapitre en arrière-plan (non bloquant)
+      computeChapterWeights(chapters, book).catch(console.error);
+
       // Trouver le premier chapitre avec du contenu réel
       // On commence depuis l'index sauvegardé, mais si vide on avance
       let startIdx = Math.max(0, Math.min(savedChapterIdx, chapters.length - 1));
@@ -228,6 +276,7 @@ export function useEpubContent() {
     currentHtml,
     localChapterIdx,
     totalChapters,
+    chapterWeights,
     bookMeta,
     chaptersRef,
     initBook,
