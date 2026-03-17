@@ -284,6 +284,22 @@ export function useTTS() {
     }, ms + 3000);
   }, [preferences, highlightSentence, clearHighlight, setSentenceIdx]);
 
+  // ── Application immédiate des changements de voix/vitesse ─────────────
+  // Relance la phrase en cours si on change la vitesse ou la voix pendant la lecture
+  useEffect(() => {
+    if (isPlayingRef.current && !isPausedRef.current) {
+      const synth = synthRef.current;
+      if (synth.speaking || synth.pending) {
+         synth.cancel();
+         setTimeout(() => {
+           if (isPlayingRef.current && !isPausedRef.current) {
+             readSentence(sentenceIdxRef.current);
+           }
+         }, 50);
+      }
+    }
+  }, [preferences.ttsRate, preferences.voice, readSentence]);
+
   // ── Extraction des phrases ─────────────────────────────────────────────
   const refreshSentences = useCallback((autoPlay = false) => {
     const container = useReaderStore.getState().contentEl;
