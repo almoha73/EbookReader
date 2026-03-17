@@ -8,6 +8,7 @@ import { useReaderStore } from '../../store/readerStore';
 import AudioControls from './AudioControls';
 import DisplaySettings from './DisplaySettings';
 import NavigationBar from './NavigationBar';
+import TocPanel from './TocPanel';
 
 // ── Conteneur HTML Isolé (évite les re-renders et la perte des <mark>) ────
 // Enveloppé dans React.memo pour ne se re-rendre QUE si le HTML ou la taille de police changent.
@@ -38,6 +39,7 @@ const EpubHtmlContent = memo(({ currentHtml, fontSize, setContentRefCallback, on
 export default function EpubViewer({ book }) {
   const contentRef    = useRef(null);
   const [showSettings, setShowSettings] = useState(false);
+  const [showToc,      setShowToc]      = useState(false);
 
   const {
     epubReady, currentChapter, ttsState, preferences,
@@ -46,7 +48,7 @@ export default function EpubViewer({ book }) {
 
   const {
     isLoading, currentHtml, localChapterIdx, totalChapters, chapterWeights, bookMeta,
-    initBook, goNextChapter, goPrevChapter,
+    chaptersRef, loadChapter, initBook, goNextChapter, goPrevChapter,
   } = useEpubContent();
 
   const {
@@ -164,12 +166,40 @@ export default function EpubViewer({ book }) {
       <NavigationBar
         title={bookMeta?.title || book?.title || 'Chargement…'}
         chapter={currentChapter}
-        onSettings={() => setShowSettings(s => !s)}
+        onSettings={() => {
+          setShowSettings(s => !s);
+          if (showToc) setShowToc(false);
+        }}
         showSettings={showSettings}
+        onToggleToc={() => {
+          setShowToc(t => !t);
+          if (showSettings) setShowSettings(false);
+        }}
+        showToc={showToc}
       />
 
       <div className={`settings-panel ${showSettings ? 'open' : ''}`}>
         <DisplaySettings />
+      </div>
+
+      {/* Panneau latéral TOC */}
+      <div 
+        className={`fixed inset-0 z-50 bg-black/60 backdrop-blur-sm transition-opacity duration-300 ${showToc ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+        onClick={() => setShowToc(false)}
+      >
+        <div 
+          className={`absolute top-0 right-0 w-80 max-w-[85vw] h-full shadow-2xl transition-transform duration-300 ease-out ${showToc ? 'translate-x-0' : 'translate-x-full'}`}
+          onClick={e => e.stopPropagation()}
+        >
+          <TocPanel 
+            chapters={chaptersRef?.current || []}
+            currentIdx={localChapterIdx}
+            onSelectChapter={(idx) => {
+              loadChapter(idx);
+            }}
+            onClose={() => setShowToc(false)}
+          />
+        </div>
       </div>
 
       <div className="reading-area px-0 sm:px-4">

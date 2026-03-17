@@ -1,7 +1,7 @@
 // src/components/Reader/NavigationBar.jsx
 import { useReaderStore } from '../../store/readerStore';
 
-export default function NavigationBar({ title, chapter, onSettings, showSettings }) {
+export default function NavigationBar({ title, chapter, onSettings, showSettings, onToggleToc, showToc }) {
   const { closeBook, totalLocations, currentLocation } = useReaderStore();
 
   const progress = totalLocations > 0
@@ -32,12 +32,29 @@ export default function NavigationBar({ title, chapter, onSettings, showSettings
       {/* Progression */}
       {totalLocations > 0 && (
         <div className="progress-wrap">
-          <div className="progress-track">
+          <div className="progress-track" title={`${progress}% lu sur l'ensemble du livre`}>
             <div className="progress-fill" style={{ width: `${progress}%` }} />
           </div>
           <span className="progress-label">{progress}%</span>
         </div>
       )}
+
+      {/* Raccourci Chapitres (TOC) */}
+      <button
+        onClick={onToggleToc}
+        className={`btn-icon ml-auto mr-2 ${showToc ? 'active text-blue-400' : ''}`}
+        title="Table des Matières"
+        aria-label="Chapitres"
+      >
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="8" y1="6" x2="21" y2="6"/>
+          <line x1="8" y1="12" x2="21" y2="12"/>
+          <line x1="8" y1="18" x2="21" y2="18"/>
+          <line x1="3" y1="6" x2="3.01" y2="6"/>
+          <line x1="3" y1="12" x2="3.01" y2="12"/>
+          <line x1="3" y1="18" x2="3.01" y2="18"/>
+        </svg>
+      </button>
 
       {/* Bouton Paramètres */}
       <button
