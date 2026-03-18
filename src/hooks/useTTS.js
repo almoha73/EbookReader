@@ -247,8 +247,13 @@ export function useTTS() {
     setSentenceIdx(idx);
 
     const text  = sents[idx];
+    
+    // Nettoyage spécifique pour les voix Microsoft Edge (Azure) sur Linux
+    // qui lisent littéralement le mot "point" s'il est le dernier caractère.
+    const cleanText = text.replace(/[\.…]+$/, '').trim();
+
     const synth = synthRef.current;
-    const utt   = new SpeechSynthesisUtterance(text);
+    const utt   = new SpeechSynthesisUtterance(cleanText);
 
     const voices = synth.getVoices();
     const saved  = preferences.voice;
