@@ -13,7 +13,7 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, s
   useEffect(() => {
     const synth = window.speechSynthesis;
     const loadVoices = () => {
-      const v = synth.getVoices().filter(v => v.lang?.startsWith('fr') || v.lang?.startsWith('en'));
+      const v = synth.getVoices().filter(v => v.lang?.toLowerCase().startsWith('fr'));
       setVoices(v.length > 0 ? v : synth.getVoices().slice(0, 10));
     };
     loadVoices();
