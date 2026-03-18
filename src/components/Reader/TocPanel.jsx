@@ -3,6 +3,9 @@ import React from 'react';
 export default function TocPanel({ chapters, currentIdx, onSelectChapter, onClose }) {
   if (!chapters || chapters.length === 0) return null;
 
+  const hasTocItems = chapters.some(ch => ch.isToc);
+  const displayChapters = hasTocItems ? chapters.filter(c => c.isToc) : chapters;
+
   return (
     <div className="flex flex-col h-full bg-slate-900 border-l border-white/10 w-full max-w-sm ml-auto">
       {/* Header */}
@@ -23,11 +26,11 @@ export default function TocPanel({ chapters, currentIdx, onSelectChapter, onClos
       {/* Liste des chapitres */}
       <div className="flex-1 overflow-y-auto p-2 scrollbar-thin scrollbar-thumb-white/20 hover:scrollbar-thumb-white/30">
         <div className="flex flex-col space-y-1">
-          {chapters.map((chapter, idx) => {
-            const isActive = idx === currentIdx;
+          {displayChapters.map((chapter) => {
+            const isActive = chapter.idx === currentIdx;
             
             // Format title intelligently
-            let displayTitle = chapter.title || `Chapitre ${idx + 1}`;
+            let displayTitle = chapter.title || `Partie ${chapter.idx + 1}`;
             // Clean up potentially long raw filenames if no title present
             if (displayTitle.length > 50) {
               displayTitle = displayTitle.substring(0, 47) + '...';
@@ -35,9 +38,9 @@ export default function TocPanel({ chapters, currentIdx, onSelectChapter, onClos
 
             return (
               <button
-                key={`${chapter.href}-${idx}`}
+                key={`${chapter.href}-${chapter.idx}`}
                 onClick={() => {
-                  onSelectChapter(idx);
+                  onSelectChapter(chapter.idx);
                   onClose();
                 }}
                 className={`
@@ -49,14 +52,11 @@ export default function TocPanel({ chapters, currentIdx, onSelectChapter, onClos
                 `}
               >
                 <div className="flex items-center gap-3">
-                  <span className={`text-xs font-mono opacity-50 w-6 text-right ${isActive ? 'text-blue-300' : ''}`}>
-                    {idx + 1}
-                  </span>
                   <span className="flex-1 truncate">
                     {displayTitle}
                   </span>
                   {isActive && (
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-400 shrink-0">
                       <path d="M5 12l5 5L20 7"/>
                     </svg>
                   )}

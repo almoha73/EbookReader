@@ -216,7 +216,8 @@ export function useEpubContent() {
           idx:      chapters.length,
           spineIdx: item.index,     // index numérique dans le spine
           href:     item.href,
-          title:    navItem?.label?.trim() || `Chapitre ${chapters.length + 1}`,
+          title:    navItem?.label?.trim() || `Partie ${chapters.length + 1}`,
+          isToc:    !!navItem,
           html:     null,           // chargé en lazy
         });
       });
