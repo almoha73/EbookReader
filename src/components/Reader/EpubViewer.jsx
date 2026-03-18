@@ -223,7 +223,7 @@ export default function EpubViewer({ book }) {
   }, [disableAutoScroll, checkScrollTransition]);
 
   const handlePlayPause = () => {
-    if (ttsState === 'idle')    play(0);
+    if (ttsState === 'idle')         play(sentenceIdx);
     else if (ttsState === 'playing') pause();
     else if (ttsState === 'paused')  resume();
   };
