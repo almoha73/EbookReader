@@ -249,8 +249,8 @@ export function useTTS() {
     const text  = sents[idx];
     
     // Nettoyage spécifique pour les voix Microsoft Edge (Azure) sur Linux
-    // qui lisent littéralement le mot "point" s'il est le dernier caractère.
-    const cleanText = text.replace(/[\.…]+$/, '').trim();
+    // On trim d'abord pour retirer les sauts de lignes invisibles, puis on enlève la ponctuation finale.
+    const cleanText = text.trim().replace(/[\.…;:!\?]+$/, '');
 
     const synth = synthRef.current;
     const utt   = new SpeechSynthesisUtterance(cleanText);
