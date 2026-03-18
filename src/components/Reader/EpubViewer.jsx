@@ -39,6 +39,9 @@ export default function EpubViewer({ book }) {
   const contentRef    = useRef(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showToc,      setShowToc]      = useState(false);
+  
+  const pendingSeekFractionRef = useRef(null);
+  const wasPlayingRef = useRef(false);
 
   const {
     epubReady, currentChapter, ttsState, preferences,
@@ -51,7 +54,7 @@ export default function EpubViewer({ book }) {
   } = useEpubContent();
 
   const {
-    play, pause, resume, stop, playFrom,
+    play, pause, resume, stop, playFrom, seekToPhrase,
     setOnPageEnd, refreshSentences,
     sentences, sentenceIdx, isPlayingRef,
     disableAutoScroll,
@@ -79,9 +82,29 @@ export default function EpubViewer({ book }) {
     if (!currentHtml || !contentRef.current) return;
     contentRef.current.scrollTop = 0;
     setTimeout(() => {
-      refreshSentences(isPlayingRef.current);
+      const isSeeking = pendingSeekFractionRef.current !== null;
+      const willAutoPlay = !isSeeking && isPlayingRef.current;
+      
+      const freshSentences = refreshSentences(willAutoPlay);
+
+      if (isSeeking && freshSentences?.length > 0) {
+        const targetFrac = pendingSeekFractionRef.current;
+        pendingSeekFractionRef.current = null;
+        
+        const targetSentenceIdx = Math.floor(targetFrac * freshSentences.length);
+        const clampedIdx = Math.max(0, Math.min(targetSentenceIdx, freshSentences.length - 1));
+        
+        setTimeout(() => {
+            if (wasPlayingRef.current) {
+                wasPlayingRef.current = false;
+                playFrom(clampedIdx);
+            } else {
+                seekToPhrase(clampedIdx);
+            }
+        }, 50);
+      }
     }, 300);
-  }, [currentHtml]);
+  }, [currentHtml, refreshSentences, playFrom, seekToPhrase]);
 
   // ── Mise à l'échelle CSS ─────────────────────────────────────────────
   useEffect(() => {
@@ -95,6 +118,51 @@ export default function EpubViewer({ book }) {
   useEffect(() => {
     document.documentElement.style.setProperty('--highlight-color', preferences.highlightColor);
   }, [preferences.highlightColor]);
+
+  // ── Recherche Globale depuis la Timeline ────────────────────────────────
+  const handleGlobalSeek = useCallback(async (percentage) => {
+    const targetOffset = percentage / 100;
+    let targetChapterIdx = 0;
+    let targetFraction = 0;
+    
+    if (chapterWeights && chapterWeights.offsets.length > 0) {
+      for (let i = 0; i < chapterWeights.offsets.length; i++) {
+        const offset = chapterWeights.offsets[i];
+        const weight = chapterWeights.weights[i] || 0;
+        if (targetOffset >= offset && targetOffset <= offset + weight) {
+          targetChapterIdx = i;
+          targetFraction = weight > 0 ? (targetOffset - offset) / weight : 0;
+          break;
+        }
+      }
+    } else {
+      if (totalChapters > 0) {
+        targetChapterIdx = Math.floor(targetOffset * totalChapters);
+        if (targetChapterIdx >= totalChapters) targetChapterIdx = totalChapters - 1;
+        targetFraction = (targetOffset * totalChapters) - targetChapterIdx;
+      }
+    }
+
+    wasPlayingRef.current = isPlayingRef.current;
+    if (isPlayingRef.current) {
+      window.speechSynthesis?.cancel();
+    }
+    stop();
+
+    if (targetChapterIdx !== localChapterIdx) {
+      pendingSeekFractionRef.current = targetFraction;
+      await loadChapter(targetChapterIdx);
+    } else {
+      const targetSentenceIdx = Math.floor(targetFraction * sentences.length);
+      const clampedIdx = Math.max(0, Math.min(targetSentenceIdx, sentences.length - 1));
+      if (wasPlayingRef.current) {
+          wasPlayingRef.current = false;
+          playFrom(clampedIdx);
+      } else {
+          seekToPhrase(clampedIdx);
+      }
+    }
+  }, [chapterWeights, totalChapters, localChapterIdx, isPlayingRef, stop, loadChapter, sentences.length, playFrom, seekToPhrase]);
 
   // ── Auto-chargement du chapitre suivant ────────────────────────────────
   const onChapterEnd = useCallback(async () => {
@@ -231,6 +299,7 @@ export default function EpubViewer({ book }) {
         onPlayPause={handlePlayPause}
         onStop={stop}
         onSeek={playFrom}
+        onGlobalSeek={handleGlobalSeek}
         sentenceCount={sentences.length}
         sentenceIdx={sentenceIdx}
         localChapterIdx={localChapterIdx}

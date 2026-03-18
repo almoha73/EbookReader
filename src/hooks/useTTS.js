@@ -397,6 +397,24 @@ export function useTTS() {
 
   const playFrom = useCallback((idx) => { stop(); setTimeout(() => play(idx), 100); }, [stop, play]);
 
+  const seekToPhrase = useCallback((idx) => {
+    stop();
+    if (idx >= 0 && idx < sentencesRef.current.length) {
+       sentenceIdxRef.current = idx;
+       setSentenceIdx(idx);
+       highlightSentence(idx);
+       autoScrollEnabledRef.current = true;
+
+       const container = useReaderStore.getState().contentEl;
+       if (container) {
+           const targetScroll = Math.max(0, currentSentenceYRef.current - container.clientHeight / 2);
+           isProgrammaticScrollRef.current = true;
+           container.scrollTop = targetScroll;
+           isProgrammaticScrollRef.current = false;
+       }
+    }
+  }, [stop, setSentenceIdx, highlightSentence]);
+
   // ── Session Audio & Contrôles écran de verrouillage ───────────────────
   useEffect(() => {
     if ('mediaSession' in navigator) {
@@ -457,7 +475,7 @@ export function useTTS() {
 
   return {
     ttsState, sentences, sentenceIdx,
-    play, pause, resume, stop, playFrom,
+    play, pause, resume, stop, playFrom, seekToPhrase,
     refreshSentences, setOnPageEnd, isPlayingRef,
     disableAutoScroll,
   };

@@ -4,10 +4,11 @@
 import { useState, useEffect } from 'react';
 import { useReaderStore } from '../../store/readerStore';
 
-export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, sentenceCount, sentenceIdx, localChapterIdx, totalChapters, chapterWeights, cfi }) {
+export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, onGlobalSeek, sentenceCount, sentenceIdx, localChapterIdx, totalChapters, chapterWeights, cfi }) {
   const { preferences, setPreference, showToast, currentBook, addBookmark } = useReaderStore();
   const [voices, setVoices] = useState([]);
   const [showVoices, setShowVoices] = useState(false);
+  const [dragProgress, setDragProgress] = useState(null);
 
   // Chargement des voix disponibles
   useEffect(() => {
@@ -45,6 +46,7 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, s
   
   const totalProgress = Math.min(100, Math.max(0, rawProgress));
   const showTotalProgress = totalChapters > 0;
+  const displayProgress = dragProgress !== null ? dragProgress : totalProgress;
 
   const handleSaveBookmark = () => {
     if (cfi && currentBook) {
@@ -71,13 +73,8 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, s
               <svg className="w-4 h-4 transform transition-transform group-open:rotate-90 text-dark-400 group-hover:text-white" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd"/>
               </svg>
-              <span>Navigation (Phrase {sentenceIdx + 1}/{sentenceCount})</span>
+              <span>Navigation par phrase ({sentenceIdx + 1}/{sentenceCount})</span>
             </div>
-            {showTotalProgress && (
-               <span className="font-mono bg-white/10 px-2 py-0.5 rounded text-[10px] text-white/80">
-                 Livre : {totalProgress.toFixed(1)}%
-               </span>
-            )}
           </summary>
           
           <div className="pt-2 pb-1 cursor-default">
@@ -106,12 +103,47 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, s
         </details>
       )}
 
-      {/* Affichage direct de la progression quand le lecteur est arrêté */}
-      {(!isActive || sentenceCount === 0) && showTotalProgress && (
-        <div className="flex justify-end mb-2">
-          <span className="font-mono bg-white/10 px-2 py-0.5 rounded text-[10px] text-dark-300">
-             Progression livre : {totalProgress.toFixed(1)}%
-          </span>
+      {/* Timeline Globale du livre */}
+      {showTotalProgress && (
+        <div className="mb-3 px-1">
+          <div className="flex justify-between text-[10px] text-dark-400 mb-1 font-mono">
+            <span>0%</span>
+            <span>Livre entier : {displayProgress.toFixed(1)}%</span>
+            <span>100%</span>
+          </div>
+          <div className="relative w-full flex items-center group/global h-3">
+            <input
+              type="range"
+              min="0"
+              max="1000"
+              value={Math.round(displayProgress * 10)}
+              onChange={(e) => setDragProgress(parseInt(e.target.value, 10) / 10)}
+              onPointerUp={() => {
+                if (dragProgress !== null) {
+                  onGlobalSeek?.(dragProgress);
+                  setDragProgress(null);
+                }
+              }}
+              onKeyUp={(e) => {
+                if (dragProgress !== null) {
+                  onGlobalSeek?.(dragProgress);
+                  setDragProgress(null);
+                }
+              }}
+              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 m-0"
+              title="Naviguer dans tout le livre"
+            />
+            <div className="absolute inset-0 w-full h-1.5 my-auto bg-dark-600 rounded-full overflow-hidden border border-white/5">
+              <div
+                className="h-full bg-gradient-to-r from-blue-500 to-indigo-400 rounded-full transition-all duration-100"
+                style={{ width: `${displayProgress}%` }}
+              />
+            </div>
+            <div 
+              className="absolute h-3 w-3 bg-white rounded-full shadow-md transform -translate-x-1/2 transition-transform duration-200 group-hover/global:scale-125"
+              style={{ left: `${displayProgress}%`, pointerEvents: 'none' }}
+            />
+          </div>
         </div>
       )}
 
