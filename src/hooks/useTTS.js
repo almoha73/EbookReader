@@ -248,9 +248,15 @@ export function useTTS() {
 
     const text  = sents[idx];
     
-    // Nettoyage spécifique pour les voix Microsoft Edge (Azure) sur Linux
-    // On trim d'abord pour retirer les sauts de lignes invisibles, puis on enlève la ponctuation finale.
-    const cleanText = text.trim().replace(/[\.…;:!\?]+$/, '');
+    // 1. Séparer les paragraphes collés (ex: "Bonjour.Comment") en injectant un espace
+    // pour éviter que le TTS ne lise "Bonjour point Comment" comme une adresse web.
+    const spacedText = text.replace(/([.!?…»])([A-ZÁÀÂÉÈÊËÎÏÔÙÛÜÇŒÆ])/gu, '$1 $2');
+
+    // 2. Nettoyage ultra-agressif pour Edge Linux :
+    // On repère la dernière ponctuation et on la supprime, AINSI que n'importe 
+    // quel caractère invisible, guillemet, ou espace qui se trouverait juste après, 
+    // en s'assurant qu'aucun "point" ne parvienne au bout de l'API vocale.
+    const cleanText = spacedText.replace(/[\.…;:!\?]+[^\p{L}\p{N}]*$/u, '');
 
     const synth = synthRef.current;
     const utt   = new SpeechSynthesisUtterance(cleanText);
