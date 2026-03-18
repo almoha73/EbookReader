@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react';
 import { useReaderStore } from '../../store/readerStore';
 
 export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, sentenceCount, sentenceIdx, localChapterIdx, totalChapters, chapterWeights, cfi }) {
-  const { preferences, setPreference, showToast, currentBook } = useReaderStore();
+  const { preferences, setPreference, showToast, currentBook, addBookmark } = useReaderStore();
   const [voices, setVoices] = useState([]);
   const [showVoices, setShowVoices] = useState(false);
 
@@ -47,10 +47,17 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, s
   const showTotalProgress = totalChapters > 0;
 
   const handleSaveBookmark = () => {
-    if (cfi) {
-      showToast(`🔖 Position sauvegardée: ${cfi.slice(0, 40)}…`);
+    if (cfi && currentBook) {
+      addBookmark({
+        id: Date.now(),
+        chapterIdx: localChapterIdx,
+        progress: totalProgress,
+        sentenceIdx: sentenceIdx,
+        timestamp: Date.now()
+      });
+      showToast(`🔖 Signet sauvegardé (${totalProgress.toFixed(1)}%)`);
     } else {
-      showToast('⚠️ Aucune position à sauvegarder');
+      showToast('⚠️ Impossible de sauvegarder le signet');
     }
   };
 

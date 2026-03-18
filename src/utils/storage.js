@@ -74,3 +74,25 @@ export function loadLibraryMeta() {
 export function generateBookId(filename) {
   return filename.toLowerCase().replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_');
 }
+
+/**
+ * Sauvegarde les signets d'un livre
+ */
+export function saveBookmarks(bookId, bookmarks) {
+  if (!bookId) return;
+  localStorage.setItem(`${PREFIX}bookmarks_${bookId}`, JSON.stringify(bookmarks));
+}
+
+/**
+ * Charge les signets d'un livre
+ */
+export function loadBookmarks(bookId) {
+  if (!bookId) return [];
+  try {
+    const raw = localStorage.getItem(`${PREFIX}bookmarks_${bookId}`);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+

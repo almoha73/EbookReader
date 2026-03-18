@@ -2,7 +2,7 @@
 // État global avec Zustand — le "Context" centralisé de l'application
 
 import { create } from 'zustand';
-import { saveProgress, loadProgress, savePreferences, loadPreferences, generateBookId } from '../utils/storage';
+import { saveProgress, loadProgress, savePreferences, loadPreferences, generateBookId, saveBookmarks, loadBookmarks } from '../utils/storage';
 import { saveLibraryMeta, loadLibraryMeta, saveEpubFile, loadEpubFile, removeEpubFile } from '../utils/libraryStorage';
 
 const DEFAULT_PREFS = {
@@ -71,7 +71,8 @@ export const useReaderStore = create((set, get) => ({
         books: state.books.map(b => b.id === book.id ? fileBook : b),
       }));
     }
-    set({ currentBook: fileBook, view: 'reader' });
+    const bookmarks = loadBookmarks(fileBook.id);
+    set({ currentBook: fileBook, view: 'reader', bookmarks });
   },
 
   closeBook: () => set({ currentBook: null, view: 'library' }),
@@ -81,6 +82,7 @@ export const useReaderStore = create((set, get) => ({
   currentChapterIdx: 0,   // index numérique du chapitre
   epubReady: false,
   contentEl: null,        // référence au <div> de lecture (pas d'iframe)
+  bookmarks: [],          // Liste des signets du livre courant
 
   setCurrentChapter: (chapter) => set({ currentChapter: chapter }),
   setCurrentChapterIdx: (idx) => {
@@ -98,6 +100,24 @@ export const useReaderStore = create((set, get) => ({
     if (!saved) return 0;
     const match = String(saved).match(/^ch(\d+)$/);
     return match ? parseInt(match[1], 10) : 0;
+  },
+
+  addBookmark: (bookmark) => {
+    set(state => {
+      if (!state.currentBook) return state;
+      const bookmarks = [...state.bookmarks, bookmark].sort((a, b) => b.timestamp - a.timestamp); // Plus récents en premier
+      saveBookmarks(state.currentBook.id, bookmarks);
+      return { bookmarks };
+    });
+  },
+
+  removeBookmark: (id) => {
+    set(state => {
+      if (!state.currentBook) return state;
+      const bookmarks = state.bookmarks.filter(b => b.id !== id);
+      saveBookmarks(state.currentBook.id, bookmarks);
+      return { bookmarks };
+    });
   },
 
   // ── État TTS ──────────────────────────────────────────────────────────
