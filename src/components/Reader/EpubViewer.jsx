@@ -13,7 +13,7 @@ import TocPanel from './TocPanel';
 // ── Conteneur HTML Isolé (évite les re-renders et la perte des <mark>) ────
 // Enveloppé dans React.memo pour ne se re-rendre QUE si le HTML ou la taille de police changent.
 // Empêche isPlaying ou sentenceIdx de déclencher un redessin destructeur.
-const EpubHtmlContent = memo(({ currentHtml, fontSize, setContentRefCallback, onScroll, onWheel, disableAutoScroll, handleNextChapterManual, handlePrevChapterManual }) => {
+const EpubHtmlContent = memo(({ currentHtml, setContentRefCallback, onScroll, onWheel, disableAutoScroll, handleNextChapterManual, handlePrevChapterManual }) => {
   return (
     <div
       ref={setContentRefCallback}
@@ -30,7 +30,6 @@ const EpubHtmlContent = memo(({ currentHtml, fontSize, setContentRefCallback, on
         if (e.key === 'ArrowLeft') handlePrevChapterManual();
       }}
       className="reader-content focus:outline-none"
-      style={{ fontSize: `${fontSize}px` }}
       dangerouslySetInnerHTML={{ __html: currentHtml }}
     />
   );
@@ -88,7 +87,8 @@ export default function EpubViewer({ book }) {
   useEffect(() => {
     if (contentRef.current) {
       contentRef.current.style.fontSize = `${preferences.fontSize}px`;
-      setTimeout(() => refreshSentences(isPlayingRef.current), 200);
+      // No longer calling refreshSentences here, allowing the DOM to retain the highlight markers
+      // and preventing the sentenceIdx from resetting to 0.
     }
   }, [preferences.fontSize]);
 
@@ -215,7 +215,6 @@ export default function EpubViewer({ book }) {
 
           <EpubHtmlContent
             currentHtml={currentHtml}
-            fontSize={preferences.fontSize}
             setContentRefCallback={setContentRefCallback}
             onScroll={handleScroll}
             onWheel={handleWheel}

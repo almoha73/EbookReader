@@ -57,8 +57,8 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, s
   return (
     <div className="glass-panel mx-2 mb-2 mt-1 px-4 py-3">
       {/* Accordéon pour le téléprompteur */}
-      {isActive && sentenceCount > 0 && (
-        <details className="mb-3 group cursor-pointer marker:text-transparent">
+      {sentenceCount > 0 && (
+        <details className="mb-3 group cursor-pointer marker:text-transparent" open>
           <summary className="flex items-center justify-between text-xs text-dark-400 mb-1 hover:text-white transition-colors list-none select-none">
             <div className="flex items-center gap-1.5 [&::-webkit-details-marker]:hidden">
               <svg className="w-4 h-4 transform transition-transform group-open:rotate-90 text-dark-400 group-hover:text-white" viewBox="0 0 20 20" fill="currentColor">
@@ -160,23 +160,29 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, s
         <div className="flex-1" />
 
         {/* Contrôle vitesse */}
-        <div className="flex items-center gap-2">
-          <span className="text-xs text-dark-400 whitespace-nowrap">
-            {preferences.ttsRate.toFixed(1)}×
+        <div className="flex items-center gap-1 bg-white/5 rounded-lg px-2 py-1">
+          <button
+            onClick={() => setPreference('ttsRate', Math.max(0.5, Number((preferences.ttsRate - 0.1).toFixed(1))))}
+            className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 rounded-md transition-colors"
+            aria-label="Réduire la vitesse"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </button>
+          <span className="text-xs font-mono text-white/90 w-8 text-center select-none">
+            {preferences.ttsRate.toFixed(1)}x
           </span>
-          <input
-            type="range"
-            min="0.5"
-            max="2.5"
-            step="0.1"
-            value={preferences.ttsRate}
-            onChange={(e) => setPreference('ttsRate', parseFloat(e.target.value))}
-            className="range-slider w-20"
-            title={`Vitesse: ${preferences.ttsRate.toFixed(1)}×`}
-            aria-label="Vitesse de lecture"
-            id="tts-speed-slider"
-          />
-          <span className="text-xs text-dark-400 hidden sm:block">Vitesse</span>
+          <button
+            onClick={() => setPreference('ttsRate', Math.min(2.5, Number((preferences.ttsRate + 0.1).toFixed(1))))}
+            className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 rounded-md transition-colors"
+            aria-label="Augmenter la vitesse"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+          </button>
         </div>
 
         {/* Sélecteur de voix */}
