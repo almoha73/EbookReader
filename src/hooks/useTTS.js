@@ -60,6 +60,7 @@ export function useTTS() {
   const isProgrammaticScrollRef = useRef(false);
   const reEnableScrollTimerRef = useRef(null); // Timer pour réactiver l'auto-scroll
   const currentMarkRef         = useRef(null);  // Élément <mark> actuellement injecté
+  const synthResumeIntervalRef = useRef(null);  // Timer anti-freeze Chrome Android (~14s bug)
 
   const setOnPageEnd = useCallback((fn) => { onPageEndRef.current = fn; }, []);
 
@@ -90,11 +91,51 @@ export function useTTS() {
         audioCtxRef.current = ctx; silentSourceRef.current = src;
       }
     } catch (_) {}
+
+    // 2. Audio HTML5 silencieux — ancre la MediaSession sur Android Chrome.
+    //    Sans ça, l'écran éteint tue le TTS même avec la Web Audio API.
+    try {
+      if (!silentHtmlAudioRef.current) {
+        // WAV silencieux minimal encodé en base64 (44 octets, 0 sample)
+        const silentWav = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
+        const audio = new Audio(silentWav);
+        audio.loop = true;
+        audio.volume = 0.001; // Quasi-silencieux mais reconnu comme média actif
+        audio.play().catch(() => {}); // Peut échouer sans geste utilisateur préalable
+        silentHtmlAudioRef.current = audio;
+      }
+    } catch (_) {}
+
+    // 3. Timer anti-freeze Chrome Android : le speechSynthesis se fige toutes les ~14s.
+    //    Un appel périodique à resume() le maintient vivant sans interrompre la phrase.
+    if (!synthResumeIntervalRef.current) {
+      synthResumeIntervalRef.current = setInterval(() => {
+        if (isPlayingRef.current && !isPausedRef.current) {
+          window.speechSynthesis.resume();
+        }
+      }, 10000);
+    }
   }, []);
 
   const stopSilentKeepAlive = useCallback(() => {
+    // Web Audio API
     try { silentSourceRef.current?.stop(); audioCtxRef.current?.close(); } catch (_) {}
     audioCtxRef.current = silentSourceRef.current = null;
+
+    // Audio HTML5 silencieux
+    try {
+      if (silentHtmlAudioRef.current) {
+        silentHtmlAudioRef.current.pause();
+        silentHtmlAudioRef.current.src = '';
+        silentHtmlAudioRef.current = null;
+      }
+    } catch (_) {}
+
+    // Timer anti-freeze
+    if (synthResumeIntervalRef.current) {
+      clearInterval(synthResumeIntervalRef.current);
+      synthResumeIntervalRef.current = null;
+    }
   }, []);
 
   // ── Surlignage Sécurisé (DOM <mark>) ────────────────────────────────────
