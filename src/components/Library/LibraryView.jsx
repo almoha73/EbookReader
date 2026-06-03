@@ -154,7 +154,7 @@ export default function LibraryView() {
           <input
             ref={fileRef}
             type="file"
-            accept=".epub,.txt,.fb2"
+            accept="*/*"
             multiple
             className="hidden"
             onChange={handleFileInput}
