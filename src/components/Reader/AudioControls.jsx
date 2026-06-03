@@ -10,6 +10,7 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
   const [voices, setVoices] = useState([]);
   const [showVoices, setShowVoices] = useState(false);
   const [dragProgress, setDragProgress] = useState(null);
+  const [dragSentenceIdx, setDragSentenceIdx] = useState(null);
   const [accordionOpen, setAccordionOpen] = useState(true);
 
   // Chargement des voix disponibles
@@ -48,7 +49,8 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
   const isActive = isPlaying || isPaused;
   
   // Progression interne de la phrase (0-100)
-  const sentenceProgress = sentenceCount > 0 ? (sentenceIdx / sentenceCount) * 100 : 0;
+  const displaySentenceIdx = dragSentenceIdx !== null ? dragSentenceIdx : sentenceIdx;
+  const sentenceProgress = sentenceCount > 0 ? (displaySentenceIdx / sentenceCount) * 100 : 0;
   
   // Progression globale estimée (% du livre) fraction de la phrase actuelle
   const chapterProgressFraction = sentenceCount > 0 ? (sentenceIdx / sentenceCount) : 0;
@@ -136,8 +138,26 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
                 type="range"
                 min="0"
                 max={Math.max(0, sentenceCount - 1)}
-                value={sentenceIdx}
-                onChange={(e) => onSeek?.(parseInt(e.target.value, 10))}
+                value={displaySentenceIdx}
+                onChange={(e) => setDragSentenceIdx(parseInt(e.target.value, 10))}
+                onMouseUp={() => {
+                  if (dragSentenceIdx !== null) {
+                    onSeek?.(dragSentenceIdx);
+                    setDragSentenceIdx(null);
+                  }
+                }}
+                onTouchEnd={() => {
+                  if (dragSentenceIdx !== null) {
+                    onSeek?.(dragSentenceIdx);
+                    setDragSentenceIdx(null);
+                  }
+                }}
+                onKeyUp={(e) => {
+                  if (dragSentenceIdx !== null) {
+                    onSeek?.(dragSentenceIdx);
+                    setDragSentenceIdx(null);
+                  }
+                }}
                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10 m-0"
                 title="Sauter à une phrase"
               />

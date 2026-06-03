@@ -67,6 +67,7 @@ export function useTTS() {
   const reEnableScrollTimerRef = useRef(null); // Timer pour réactiver l'auto-scroll
   const currentMarkRef         = useRef(null);  // Élément <mark> actuellement injecté
   const synthResumeIntervalRef = useRef(null);  // Timer anti-freeze Chrome Android (~14s bug)
+  const playFromTimeoutRef     = useRef(null);
 
   const setOnPageEnd = useCallback((fn) => { onPageEndRef.current = fn; }, []);
 
@@ -276,6 +277,13 @@ export function useTTS() {
     return () => cancelAnimationFrame(frameId);
   }, []);
 
+  const pause = useCallback(() => {
+    isPausedRef.current = true; isPlayingRef.current = false;
+    setTtsState('paused'); TextToSpeech.stop().catch(()=>{});
+    import('@capgo/capacitor-media-session').then(({ MediaSession }) => MediaSession.setPlaybackState({ playbackState: 'paused' }).catch(()=>{})).catch(()=>{});
+    if (recoveryTimerRef.current) clearTimeout(recoveryTimerRef.current);
+  }, [setTtsState]);
+
   // ── Lecture phrase par phrase ─────────────────────────────────────────
   const readSentence = useCallback((idx) => {
     if (!isPlayingRef.current || isPausedRef.current) return;
@@ -309,6 +317,14 @@ export function useTTS() {
 
     const currentPrefs = useReaderStore.getState().preferences;
 
+    if (!cleanText.trim()) {
+      if (recoveryTimerRef.current) clearTimeout(recoveryTimerRef.current);
+      setTimeout(() => {
+        if (isPlayingRef.current && !isPausedRef.current) readSentence(idx + 1);
+      }, 50);
+      return;
+    }
+
     if (recoveryTimerRef.current) clearTimeout(recoveryTimerRef.current);
     const ms = (text.length / 12) * (1 / (currentPrefs.ttsRate || 1)) * 1000;
     recoveryTimerRef.current = setTimeout(() => {
@@ -330,12 +346,12 @@ export function useTTS() {
     }).catch((e) => {
       console.warn('TTS Speak error:', e);
       if (recoveryTimerRef.current) clearTimeout(recoveryTimerRef.current);
-      setTimeout(() => {
-        if (isPlayingRef.current && !isPausedRef.current) readSentence(idx);
-      }, 300);
+      // Auto-pause to prevent infinite retry loop that causes screen jumping
+      pause();
+      showToast('⚠️ Erreur vocale, lecture en pause');
     });
 
-  }, [highlightSentence, clearHighlight, setSentenceIdx]);
+  }, [highlightSentence, clearHighlight, setSentenceIdx, pause, showToast]);
 
   // ── Application immédiate des changements de voix/vitesse ─────────────
   // Relance la phrase en cours si on change la vitesse ou la voix pendant la lecture
@@ -404,18 +420,14 @@ export function useTTS() {
     setTtsState('playing');
     import('@capgo/capacitor-media-session').then(({ MediaSession }) => MediaSession.setPlaybackState({ playbackState: 'playing' }).catch(()=>{})).catch(()=>{});
     
-    // Toujours rafraîchir : garantit que allNodesRef est propre et à jour
-    const s = refreshSentences(false);
+    // On ne force pas le rafraîchissement complet si on a déjà les phrases
+    let s = sentencesRef.current;
+    if (!s || s.length === 0) {
+      s = refreshSentences(false);
+    }
     if (!s?.length) { showToast('⚠️ Aucun texte trouvé'); setTtsState('idle'); isPlayingRef.current = false; return; }
     readSentence(fromIdx);
   }, [startSilentKeepAlive, setTtsState, refreshSentences, readSentence, showToast]);
-
-  const pause = useCallback(() => {
-    isPausedRef.current = true; isPlayingRef.current = false;
-    setTtsState('paused'); TextToSpeech.stop().catch(()=>{});
-    import('@capgo/capacitor-media-session').then(({ MediaSession }) => MediaSession.setPlaybackState({ playbackState: 'paused' }).catch(()=>{})).catch(()=>{});
-    if (recoveryTimerRef.current) clearTimeout(recoveryTimerRef.current);
-  }, [setTtsState]);
 
   const resume = useCallback(() => {
     isPausedRef.current = false; isPlayingRef.current = true;
@@ -426,6 +438,7 @@ export function useTTS() {
   }, [setTtsState, readSentence]);
 
   const stop = useCallback(() => {
+    if (playFromTimeoutRef.current) { clearTimeout(playFromTimeoutRef.current); playFromTimeoutRef.current = null; }
     isPlayingRef.current = false; isPausedRef.current = false;
     setTtsState('idle'); TextToSpeech.stop().catch(()=>{});
     import('@capgo/capacitor-media-session').then(({ MediaSession }) => MediaSession.setPlaybackState({ playbackState: 'none' }).catch(()=>{})).catch(()=>{});
@@ -435,7 +448,21 @@ export function useTTS() {
     if (recoveryTimerRef.current) clearTimeout(recoveryTimerRef.current);
   }, [setTtsState, setSentenceIdx, clearHighlight, stopSilentKeepAlive]);
 
-  const playFrom = useCallback((idx) => { stop(); setTimeout(() => play(idx), 100); }, [stop, play]);
+  const playFrom = useCallback((idx) => { 
+    if (playFromTimeoutRef.current) clearTimeout(playFromTimeoutRef.current);
+    if (recoveryTimerRef.current) clearTimeout(recoveryTimerRef.current);
+    
+    TextToSpeech.stop().catch(()=>{});
+    isPlayingRef.current = true;
+    isPausedRef.current = false;
+    setTtsState('playing');
+    
+    playFromTimeoutRef.current = setTimeout(() => {
+      if (isPlayingRef.current && !isPausedRef.current) {
+        readSentence(idx);
+      }
+    }, 150); 
+  }, [readSentence, setTtsState]);
 
   const seekToPhrase = useCallback((idx) => {
     stop();

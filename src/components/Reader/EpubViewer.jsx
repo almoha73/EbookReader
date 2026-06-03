@@ -224,9 +224,6 @@ export default function EpubViewer({ book }) {
     }
 
     wasPlayingRef.current = isPlayingRef.current;
-    if (isPlayingRef.current) {
-      window.speechSynthesis?.cancel();
-    }
     stop();
 
     if (targetChapterIdx !== localChapterIdx) {
@@ -249,9 +246,6 @@ export default function EpubViewer({ book }) {
     if (!bookmark) return;
     
     wasPlayingRef.current = isPlayingRef.current;
-    if (isPlayingRef.current) {
-      window.speechSynthesis?.cancel();
-    }
     stop();
 
     if (bookmark.chapterIdx !== localChapterIdx) {
@@ -270,7 +264,6 @@ export default function EpubViewer({ book }) {
 
   // ── Auto-chargement du chapitre suivant ────────────────────────────────
   const onChapterEnd = useCallback(async () => {
-    window.speechSynthesis?.cancel();
     const ok = await goNextChapter();
     if (!ok) stop(); // Fin du livre
     else setTimeout(() => refreshSentences(true), 400); // true = autoPlay
@@ -282,14 +275,12 @@ export default function EpubViewer({ book }) {
 
   const handleNextChapterManual = useCallback(async (e) => {
     if (e) e.stopPropagation();
-    window.speechSynthesis?.cancel();
     stop();
     await goNextChapter();
   }, [goNextChapter, stop]);
 
   const handlePrevChapterManual = useCallback(async (e) => {
     if (e) e.stopPropagation();
-    window.speechSynthesis?.cancel();
     stop();
     await goPrevChapter();
   }, [goPrevChapter, stop]);
@@ -457,7 +448,13 @@ export default function EpubViewer({ book }) {
           ttsState={ttsState}
           onPlayPause={handlePlayPause}
           onStop={stop}
-          onSeek={playFrom}
+          onSeek={(idx) => {
+            if (isPlayingRef.current) {
+               playFrom(idx);
+            } else {
+               seekToPhrase(idx);
+            }
+          }}
           onGlobalSeek={handleGlobalSeek}
           sentenceCount={sentences.length}
           sentenceIdx={sentenceIdx}
