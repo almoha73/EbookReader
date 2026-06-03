@@ -61,11 +61,27 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
 
   const handleSaveBookmark = () => {
     if (cfi && currentBook) {
+      let targetIdx = sentenceIdx;
+      let fraction = 0;
+
+      const container = document.querySelector('.reader-content');
+      if (container) {
+          const maxScroll = Math.max(1, container.scrollHeight - container.clientHeight);
+          fraction = maxScroll > 0 ? container.scrollTop / maxScroll : 0;
+          
+          if (ttsState !== 'playing' && sentenceCount > 0) {
+              targetIdx = Math.floor(fraction * sentenceCount);
+              // S'assurer qu'on ne dépasse pas les bornes
+              targetIdx = Math.max(0, Math.min(targetIdx, sentenceCount - 1));
+          }
+      }
+
       addBookmark({
         id: Date.now(),
         chapterIdx: localChapterIdx,
         progress: totalProgress,
-        sentenceIdx: sentenceIdx,
+        sentenceIdx: targetIdx,
+        chapterFraction: fraction,
         timestamp: Date.now()
       });
       showToast(`🔖 Signet sauvegardé (${totalProgress.toFixed(1)}%)`);
