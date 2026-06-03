@@ -19,11 +19,12 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
         const mappedVoices = allVoices.map((v, i) => ({ ...v, globalIndex: i }));
         const v = mappedVoices.filter(v => v.lang?.toLowerCase().startsWith('fr'));
         
-        // Dédoublonner par nom
+        // Dédoublonner par URI pour éviter de fusionner des voix différentes ayant le même nom (ex: Samsung TTS)
         const uniqueVoicesMap = new Map();
         for (const voice of v) {
-            if (!uniqueVoicesMap.has(voice.name)) {
-                uniqueVoicesMap.set(voice.name, voice);
+            const key = voice.voiceURI || voice.name;
+            if (!uniqueVoicesMap.has(key)) {
+                uniqueVoicesMap.set(key, voice);
             }
         }
         
@@ -103,9 +104,9 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
       {/* Accordéon pour le téléprompteur */}
       {sentenceCount > 0 && (
         <details className="mb-3 group cursor-pointer marker:text-transparent" open>
-          <summary className="flex items-center justify-between text-xs text-dark-400 mb-1 hover:text-white transition-colors list-none select-none">
+          <summary className="flex items-center justify-between text-xs text-gray-300 mb-1 hover:text-white transition-colors list-none select-none">
             <div className="flex items-center gap-1.5 [&::-webkit-details-marker]:hidden">
-              <svg className="w-4 h-4 transform transition-transform group-open:rotate-90 text-dark-400 group-hover:text-white" viewBox="0 0 20 20" fill="currentColor">
+              <svg className="w-4 h-4 transform transition-transform group-open:rotate-90 text-gray-300 group-hover:text-white" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd"/>
               </svg>
               <span>Navigation par phrase ({sentenceIdx + 1}/{sentenceCount})</span>
@@ -141,7 +142,7 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
       {/* Timeline Globale du livre */}
       {showTotalProgress && (
         <div className="mb-3 px-1">
-          <div className="flex justify-between text-[10px] text-dark-400 mb-1 font-mono">
+          <div className="flex justify-between text-[10px] text-gray-300 mb-1 font-mono">
             <span>0%</span>
             <span>Livre entier : {displayProgress.toFixed(1)}%</span>
             <span>100%</span>
@@ -227,7 +228,7 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
           </div>
         )}
         {isPaused && (
-          <span className="text-xs text-dark-400 italic">En pause</span>
+          <span className="text-xs text-gray-300 italic">En pause</span>
         )}
 
         {/* Spacer */}
