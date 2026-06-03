@@ -88,18 +88,32 @@ export const useReaderStore = create((set, get) => ({
   setCurrentChapterIdx: (idx) => {
     set({ currentChapterIdx: idx });
     const { currentBook } = get();
-    if (currentBook?.id) saveProgress(currentBook.id, `ch${idx}`);
+    // Default fraction 0 on chapter change
+    if (currentBook?.id) saveProgress(currentBook.id, JSON.stringify({ idx, fraction: 0 }));
   },
   setEpubReady: (ready) => set({ epubReady: ready }),
   setContentEl: (el) => set({ contentEl: el }),
 
-  getSavedChapterIdx: () => {
+  saveCurrentPosition: (fraction) => {
+    const { currentBook, currentChapterIdx } = get();
+    if (currentBook?.id) {
+       saveProgress(currentBook.id, JSON.stringify({ idx: currentChapterIdx, fraction }));
+    }
+  },
+
+  getSavedProgress: () => {
     const { currentBook } = get();
-    if (!currentBook?.id) return 0;
+    if (!currentBook?.id) return { idx: 0, fraction: 0 };
     const saved = loadProgress(currentBook.id);
-    if (!saved) return 0;
-    const match = String(saved).match(/^ch(\d+)$/);
-    return match ? parseInt(match[1], 10) : 0;
+    if (!saved) return { idx: 0, fraction: 0 };
+    try {
+        if (typeof saved === 'string' && saved.startsWith('{')) {
+            return JSON.parse(saved);
+        } else if (typeof saved === 'string' && saved.startsWith('ch')) {
+            return { idx: parseInt(saved.replace('ch', ''), 10) || 0, fraction: 0 };
+        }
+    } catch(e) {}
+    return { idx: 0, fraction: 0 };
   },
 
   addBookmark: (bookmark) => {

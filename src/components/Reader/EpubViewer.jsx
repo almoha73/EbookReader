@@ -71,7 +71,7 @@ export default function EpubViewer({ book }) {
 
   const {
     epubReady, currentChapter, ttsState, preferences,
-    setContentEl, getSavedChapterIdx,
+    setContentEl, getSavedProgress,
   } = useReaderStore();
 
   const {
@@ -102,9 +102,10 @@ export default function EpubViewer({ book }) {
   // ── Initialisation du livre ────────────────────────────────────────────
   useEffect(() => {
     if (!book?.file) return;
-    const savedIdx = getSavedChapterIdx();
+    const { idx: savedIdx, fraction: savedFraction } = getSavedProgress();
     initBook(book.file, savedIdx).then((meta) => {
       if (meta) {
+        if (savedFraction > 0) pendingSeekFractionRef.current = savedFraction;
         setTimeout(() => refreshSentences(false), 400);
       }
     });
@@ -289,10 +290,21 @@ export default function EpubViewer({ book }) {
     }
   }, [handleNextChapterManual, handlePrevChapterManual, isPlayingRef]);
 
+  const saveProgressTimeoutRef = useRef(null);
+
   const handleScroll = useCallback((e) => {
     // Le onScroll natif détecte surtout le scroll vers le bas car on force le scrollTop au chapitre précédent.
     checkScrollTransition('down', e.target);
     if (e.target.scrollTop === 0) checkScrollTransition('up', e.target);
+    
+    // Sauvegarder la position exacte pour reprendre au même endroit
+    if (saveProgressTimeoutRef.current) clearTimeout(saveProgressTimeoutRef.current);
+    saveProgressTimeoutRef.current = setTimeout(() => {
+       const el = e.target;
+       const newHeight = Math.max(1, el.scrollHeight - el.clientHeight);
+       const fraction = el.scrollTop / newHeight;
+       useReaderStore.getState().saveCurrentPosition(fraction);
+    }, 500);
   }, [checkScrollTransition]);
 
   const handleWheel = useCallback((e) => {
@@ -329,7 +341,7 @@ export default function EpubViewer({ book }) {
             <button
               onClick={() => {
                 setError(null);
-                const savedIdx = getSavedChapterIdx();
+                const { idx: savedIdx } = getSavedProgress();
                 if (book?.file) initBook(book.file, savedIdx);
               }}
               className="btn-primary"
