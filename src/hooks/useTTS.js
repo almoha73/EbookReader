@@ -290,6 +290,13 @@ export function useTTS() {
     sentenceIdxRef.current = idx;
     setSentenceIdx(idx);
 
+    const container = useReaderStore.getState().contentEl;
+    if (container) {
+       const newHeight = Math.max(1, container.scrollHeight - container.clientHeight);
+       const fraction = container.scrollTop / newHeight;
+       useReaderStore.getState().saveCurrentPosition(fraction);
+    }
+
     const text  = sents[idx];
     
     // 1. Séparer les paragraphes collés

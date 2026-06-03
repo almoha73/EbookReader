@@ -27,6 +27,8 @@ html, body, #root {
   color: #e6edf3;
   font-family: 'Inter', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  overscroll-behavior: none;
 }
 
 /* ── Scrollbar Styling ──────────────────────────────────────────────────── */
@@ -153,7 +155,7 @@ html, body, #root {
     radial-gradient(ellipse at 80% 20%, rgba(188, 140, 255, 0.06) 0%, transparent 60%),
     radial-gradient(ellipse at 50% 90%, rgba(63, 185, 80, 0.04) 0%, transparent 60%),
     #070b12;
-  min-height: 100vh;
+  min-height: 100%;
 }
 
 /* ── Reader Header ───────────────────────────────────────────────────────── */
@@ -243,7 +245,7 @@ html, body, #root {
 .reader-shell {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
   overflow: hidden;
   background:
     radial-gradient(ellipse at 15% 40%, rgba(56, 139, 253, 0.07) 0%, transparent 55%),
@@ -285,7 +287,7 @@ html, body, #root {
   inset: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 32px 52px 64px 52px; /* Pad bottom pour ne pas coller à la fin */
+  padding: 32px 52px 140px 52px; /* Pad bottom pour ne pas coller à la fin et laisser place aux contrôles */
   color: #dde4f0;
   line-height: 1.8;
   font-family: 'Georgia', 'Palatino', 'Times New Roman', serif;
@@ -342,7 +344,7 @@ mark.tts-highlight {
 }
 @media (max-width: 600px) {
   .reader-content {
-    padding: 20px 20px;
+    padding: 20px 20px 140px 20px;
   }
 }
 

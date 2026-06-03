@@ -10,7 +10,7 @@ export default function ReaderView() {
   if (!currentBook) return null;
 
   return (
-    <div className="animated-bg h-screen flex flex-col overflow-hidden">
+    <div className="animated-bg h-full flex flex-col overflow-hidden">
       <EpubViewer book={currentBook} />
     </div>
   );

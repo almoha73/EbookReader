@@ -10,6 +10,7 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
   const [voices, setVoices] = useState([]);
   const [showVoices, setShowVoices] = useState(false);
   const [dragProgress, setDragProgress] = useState(null);
+  const [accordionOpen, setAccordionOpen] = useState(true);
 
   // Chargement des voix disponibles
   useEffect(() => {
@@ -100,11 +101,27 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
   };
 
   return (
-    <div className="glass-panel mx-2 mb-2 mt-1 px-4 py-3">
+    <div 
+      className="glass-panel mx-0 mb-0 mt-1 px-4 pt-3 pb-3" 
+      style={{ 
+        borderBottomLeftRadius: 0, 
+        borderBottomRightRadius: 0, 
+        borderBottom: 'none',
+        borderLeft: 'none',
+        borderRight: 'none',
+        paddingBottom: 'calc(12px + env(safe-area-inset-bottom))' 
+      }}
+    >
       {/* Accordéon pour le téléprompteur */}
       {sentenceCount > 0 && (
-        <details className="mb-3 group cursor-pointer marker:text-transparent" open>
-          <summary className="flex items-center justify-between text-xs text-gray-300 mb-1 hover:text-white transition-colors list-none select-none">
+        <details className="mb-3 group cursor-pointer marker:text-transparent" open={accordionOpen}>
+          <summary 
+            className="flex items-center justify-between text-xs text-gray-300 mb-1 hover:text-white transition-colors list-none select-none"
+            onClick={(e) => {
+              e.preventDefault();
+              setAccordionOpen(!accordionOpen);
+            }}
+          >
             <div className="flex items-center gap-1.5 [&::-webkit-details-marker]:hidden">
               <svg className="w-4 h-4 transform transition-transform group-open:rotate-90 text-gray-300 group-hover:text-white" viewBox="0 0 20 20" fill="currentColor">
                 <path fillRule="evenodd" d="M7.293 14.707a1 1 0 010-1.414L10.586 10 7.293 6.707a1 1 0 011.414-1.414l4 4a1 1 0 010 1.414l-4 4a1 1 0 01-1.414 0z" clipRule="evenodd"/>

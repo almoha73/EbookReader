@@ -99,6 +99,28 @@ export default function EpubViewer({ book }) {
     setContentEl(el);
   }, [setContentEl]);
 
+  const currentFractionRef = useRef(0);
+
+  // ── Redimensionnement (Orientation / Mode paysage) ────────────────────
+  useEffect(() => {
+    if (!contentRef.current) return;
+    const container = contentRef.current;
+
+    const resizeObserver = new ResizeObserver(() => {
+      const mark = container.querySelector('mark.tts-highlight');
+      if (mark) {
+         const targetScroll = Math.max(0, mark.offsetTop - container.clientHeight / 2);
+         container.scrollTop = targetScroll;
+      } else {
+         const newHeight = Math.max(1, container.scrollHeight - container.clientHeight);
+         container.scrollTop = currentFractionRef.current * newHeight;
+      }
+    });
+
+    resizeObserver.observe(container);
+    return () => resizeObserver.disconnect();
+  }, []);
+
   // ── Initialisation du livre ────────────────────────────────────────────
   useEffect(() => {
     if (!book?.file) return;
@@ -303,6 +325,7 @@ export default function EpubViewer({ book }) {
        const el = e.target;
        const newHeight = Math.max(1, el.scrollHeight - el.clientHeight);
        const fraction = el.scrollTop / newHeight;
+       currentFractionRef.current = fraction;
        useReaderStore.getState().saveCurrentPosition(fraction);
     }, 500);
   }, [checkScrollTransition]);

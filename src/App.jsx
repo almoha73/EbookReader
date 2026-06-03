@@ -10,7 +10,7 @@ export default function App() {
   const { view } = useReaderStore();
 
   return (
-    <div className="h-screen overflow-hidden">
+    <div className="h-full overflow-hidden">
       {/* Transition entre les vues */}
       <div
         className={`h-full transition-all duration-400 ${

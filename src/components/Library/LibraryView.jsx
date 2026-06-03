@@ -124,7 +124,7 @@ export default function LibraryView() {
   };
 
   return (
-    <div className="animated-bg min-h-screen">
+    <div className="animated-bg min-h-full">
       {/* ── Header ───────────────────────────────────────────────────── */}
       <header className="sticky top-0 z-40 glass border-b border-white/5">
         <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
