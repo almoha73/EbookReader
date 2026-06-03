@@ -11,7 +11,7 @@
   --reader-font-size: 18px;
   --reader-line-height: 1.75;
   --reader-font-family: 'Georgia', serif;
-  --glass-bg: rgba(22, 27, 34, 0.72);
+  --glass-bg: rgba(22, 27, 34, 0.98);
   --glass-border: rgba(255, 255, 255, 0.08);
   --glow-brand: rgba(88, 166, 255, 0.3);
 }
@@ -162,7 +162,7 @@ html, body, #root {
   align-items: center;
   gap: 12px;
   padding: 10px 16px;
-  background: rgba(13, 17, 23, 0.85);
+  background: rgba(13, 17, 23, 0.98);
   backdrop-filter: blur(20px);
   border-bottom: 1px solid rgba(255,255,255,0.06);
   flex-shrink: 0;

@@ -41,10 +41,33 @@ export default function EpubViewer({ book }) {
   const contentRef    = useRef(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showToc,      setShowToc]      = useState(false);
+  const [showUi,       setShowUi]       = useState(true);
   
   const pendingSeekFractionRef = useRef(null);
   const pendingSeekSentenceIdxRef = useRef(null);
   const wasPlayingRef = useRef(false);
+  const uiTimeoutRef = useRef(null);
+
+  const resetUiTimeout = useCallback(() => {
+    setShowUi(true);
+    if (uiTimeoutRef.current) clearTimeout(uiTimeoutRef.current);
+    uiTimeoutRef.current = setTimeout(() => {
+      setShowUi(false);
+    }, 4000);
+  }, []);
+
+  useEffect(() => {
+    return () => { if (uiTimeoutRef.current) clearTimeout(uiTimeoutRef.current); };
+  }, []);
+
+  useEffect(() => {
+    if (showToc || showSettings) {
+      if (uiTimeoutRef.current) clearTimeout(uiTimeoutRef.current);
+      setShowUi(true);
+    } else {
+      resetUiTimeout();
+    }
+  }, [showToc, showSettings, resetUiTimeout]);
 
   const {
     epubReady, currentChapter, ttsState, preferences,
@@ -273,12 +296,13 @@ export default function EpubViewer({ book }) {
   }, [checkScrollTransition]);
 
   const handleWheel = useCallback((e) => {
+    resetUiTimeout();
     disableAutoScroll();
     if (!contentRef.current) return;
     // Si la page est trop courte pour scroller, ou qu'on force la molette aux extrémités:
     if (e.deltaY > 0) checkScrollTransition('down', contentRef.current);
     else if (e.deltaY < 0) checkScrollTransition('up', contentRef.current);
-  }, [disableAutoScroll, checkScrollTransition]);
+  }, [disableAutoScroll, checkScrollTransition, resetUiTimeout]);
 
   const handlePlayPause = () => {
     if (ttsState === 'idle')         play(sentenceIdx);
@@ -287,7 +311,12 @@ export default function EpubViewer({ book }) {
   };
 
   return (
-    <div className="reader-shell">
+    <div 
+      className="reader-shell relative"
+      onClick={resetUiTimeout}
+      onTouchStart={resetUiTimeout}
+      onMouseMove={resetUiTimeout}
+    >
 
       {error && (
         <div className="absolute inset-0 bg-[#070b12]/95 flex flex-col items-center justify-center p-6 text-center z-[100]" style={{ zIndex: 100 }}>
@@ -320,22 +349,24 @@ export default function EpubViewer({ book }) {
         </div>
       )}
 
-      <NavigationBar
-        title={bookMeta?.title || book?.title || 'Chargement…'}
-        chapter={currentChapter}
-        onSettings={() => {
-          setShowSettings(s => !s);
-          if (showToc) setShowToc(false);
-        }}
-        showSettings={showSettings}
-        onToggleToc={() => {
-          setShowToc(t => !t);
-          if (showSettings) setShowSettings(false);
-        }}
-        showToc={showToc}
-      />
+      <div className={`absolute top-0 left-0 right-0 z-40 transition-opacity duration-500 ease-in-out ${showUi || showSettings || showToc ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+        <NavigationBar
+          title={bookMeta?.title || book?.title || 'Chargement…'}
+          chapter={currentChapter}
+          onSettings={() => {
+            setShowSettings(s => !s);
+            if (showToc) setShowToc(false);
+          }}
+          showSettings={showSettings}
+          onToggleToc={() => {
+            setShowToc(t => !t);
+            if (showSettings) setShowSettings(false);
+          }}
+          showToc={showToc}
+        />
+      </div>
 
-      <div className={`settings-panel ${showSettings ? 'open' : ''}`}>
+      <div className={`absolute top-[60px] right-0 z-40 settings-panel ${showSettings ? 'open' : ''}`}>
         <DisplaySettings />
       </div>
 
@@ -386,19 +417,21 @@ export default function EpubViewer({ book }) {
 
       </div>
 
-      <AudioControls
-        ttsState={ttsState}
-        onPlayPause={handlePlayPause}
-        onStop={stop}
-        onSeek={playFrom}
-        onGlobalSeek={handleGlobalSeek}
-        sentenceCount={sentences.length}
-        sentenceIdx={sentenceIdx}
-        localChapterIdx={localChapterIdx}
-        totalChapters={totalChapters}
-        chapterWeights={chapterWeights}
-        cfi={`ch${localChapterIdx + 1}/${totalChapters}`}
-      />
+      <div className={`absolute bottom-0 left-0 right-0 z-40 transition-opacity duration-500 ease-in-out ${showUi || showSettings || showToc ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+        <AudioControls
+          ttsState={ttsState}
+          onPlayPause={handlePlayPause}
+          onStop={stop}
+          onSeek={playFrom}
+          onGlobalSeek={handleGlobalSeek}
+          sentenceCount={sentences.length}
+          sentenceIdx={sentenceIdx}
+          localChapterIdx={localChapterIdx}
+          totalChapters={totalChapters}
+          chapterWeights={chapterWeights}
+          cfi={`ch${localChapterIdx + 1}/${totalChapters}`}
+        />
+      </div>
 
     </div>
   );
