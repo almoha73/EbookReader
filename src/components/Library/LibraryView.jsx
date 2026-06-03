@@ -4,6 +4,7 @@
 import { useRef, useState } from 'react';
 import { useReaderStore } from '../../store/readerStore';
 import BookCard from './BookCard';
+import { convertTxtToEpub, convertFb2ToEpub } from '../../utils/fileConverter';
 import ePub from 'epubjs';
 
 export default function LibraryView() {
@@ -36,13 +37,45 @@ export default function LibraryView() {
   };
 
   const processEpubFile = async (file) => {
-    if (!file?.name?.endsWith('.epub')) {
-      showToast('⚠️ Veuillez choisir un fichier .epub');
+    let finalFile = file;
+
+    if (file?.name?.toLowerCase().endsWith('.txt')) {
+      const confirmConv = window.confirm(`Le fichier "${file.name}" est un fichier texte brut.\nVoulez-vous le convertir en livre (EPUB) pour le lire ?`);
+      if (!confirmConv) return;
+      
+      setLoading(true);
+      showToast('⚙️ Conversion TXT vers EPUB en cours...');
+      try {
+        finalFile = await convertTxtToEpub(file);
+      } catch (e) {
+        console.error(e);
+        setLoading(false);
+        showToast('❌ Échec de la conversion TXT');
+        return;
+      }
+    } else if (file?.name?.toLowerCase().endsWith('.fb2')) {
+      const confirmConv = window.confirm(`Le fichier "${file.name}" est au format FB2.\nVoulez-vous le convertir en livre (EPUB) pour le lire ?`);
+      if (!confirmConv) return;
+
+      setLoading(true);
+      showToast('⚙️ Conversion FB2 vers EPUB en cours...');
+      try {
+        finalFile = await convertFb2ToEpub(file);
+      } catch (e) {
+        console.error(e);
+        setLoading(false);
+        showToast("❌ Échec de la conversion. Le fichier FB2 n'est peut-être pas valide.");
+        return;
+      }
+    }
+
+    if (!finalFile?.name?.toLowerCase().endsWith('.epub')) {
+      showToast('⚠️ Veuillez choisir un fichier .epub, .txt ou .fb2');
       return;
     }
     setLoading(true);
     try {
-      const arrayBuffer = await file.arrayBuffer();
+      const arrayBuffer = await finalFile.arrayBuffer();
       const book = ePub(arrayBuffer);
       const meta = await book.loaded.metadata;
 
@@ -58,8 +91,8 @@ export default function LibraryView() {
       book.destroy();
 
       const bookData = {
-        file,
-        title: meta?.title || file.name.replace('.epub', ''),
+        file: finalFile,
+        title: meta?.title || finalFile.name.replace(/\.epub$/i, ''),
         author: meta?.creator || '',
         coverUrl,
       };
@@ -116,12 +149,12 @@ export default function LibraryView() {
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
               </svg>
             )}
-            <span>{loading ? 'Import…' : 'Importer EPUB'}</span>
+            <span>{loading ? 'Import…' : 'Importer EPUB, TXT, FB2'}</span>
           </button>
           <input
             ref={fileRef}
             type="file"
-            accept=".epub"
+            accept=".epub,.txt,.fb2"
             multiple
             className="hidden"
             onChange={handleFileInput}
@@ -150,13 +183,13 @@ export default function LibraryView() {
               Votre bibliothèque est vide
             </h2>
             <p className="text-dark-400 text-center max-w-sm mb-6">
-              Importez vos fichiers EPUB pour commencer à lire. Glissez-déposez ou cliquez sur le bouton.
+              Importez vos fichiers pour commencer à lire. Glissez-déposez ou cliquez sur le bouton.
             </p>
             <button
               onClick={() => fileRef.current?.click()}
               className="btn-primary text-base px-6 py-3"
             >
-              📂 Choisir un fichier EPUB
+              📂 Choisir un fichier (EPUB, TXT, FB2)
             </button>
             <p className="text-xs text-dark-500 mt-4">
               Vos livres sont stockés localement dans votre navigateur
@@ -176,7 +209,7 @@ export default function LibraryView() {
               }`}
             >
               <p className="text-xs text-dark-400">
-                Glissez-déposez des fichiers .epub ici pour les ajouter
+                Glissez-déposez des fichiers ici pour les ajouter (.epub, .txt, .fb2)
               </p>
             </div>
 
