@@ -13,7 +13,7 @@ import TocPanel from './TocPanel';
 // ── Conteneur HTML Isolé (évite les re-renders et la perte des <mark>) ────
 // Enveloppé dans React.memo pour ne se re-rendre QUE si le HTML ou la taille de police changent.
 // Empêche isPlaying ou sentenceIdx de déclencher un redessin destructeur.
-const EpubHtmlContent = memo(({ currentHtml, setContentRefCallback, onScroll, onWheel, disableAutoScroll, handleNextChapterManual, handlePrevChapterManual }) => {
+const EpubHtmlContent = memo(({ currentHtml, setContentRefCallback, onScroll, onWheel, disableAutoScroll, handleNextChapterManual, handlePrevChapterManual, onDoubleClick, onContextMenu }) => {
   return (
     <div
       ref={setContentRefCallback}
@@ -22,6 +22,8 @@ const EpubHtmlContent = memo(({ currentHtml, setContentRefCallback, onScroll, on
       onWheel={onWheel}
       onTouchMove={disableAutoScroll}
       onMouseDown={disableAutoScroll}
+      onDoubleClick={onDoubleClick}
+      onContextMenu={onContextMenu}
       onKeyDown={(e) => {
         if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Space'].includes(e.code)) {
           disableAutoScroll();
@@ -41,6 +43,7 @@ export default function EpubViewer({ book }) {
   const [showToc,      setShowToc]      = useState(false);
   
   const pendingSeekFractionRef = useRef(null);
+  const pendingSeekSentenceIdxRef = useRef(null);
   const wasPlayingRef = useRef(false);
 
   const {
@@ -50,15 +53,23 @@ export default function EpubViewer({ book }) {
 
   const {
     isLoading, currentHtml, localChapterIdx, totalChapters, chapterWeights, bookMeta,
-    chaptersRef, loadChapter, initBook, goNextChapter, goPrevChapter,
+    chaptersRef, loadChapter, initBook, goNextChapter, goPrevChapter, error, setError,
   } = useEpubContent();
 
   const {
-    play, pause, resume, stop, playFrom, seekToPhrase,
+    play, pause, resume, stop, playFrom, seekToPhrase, playFromSelection,
     setOnPageEnd, refreshSentences,
     sentences, sentenceIdx, isPlayingRef,
     disableAutoScroll,
   } = useTTS();
+
+  const handleContextMenu = useCallback((e) => {
+    const sel = window.getSelection();
+    if (sel && sel.toString().trim().length > 0) {
+      e.preventDefault();
+      playFromSelection();
+    }
+  }, [playFromSelection]);
 
   const setContentRefCallback = useCallback((el) => {
     contentRef.current = el;
@@ -82,16 +93,25 @@ export default function EpubViewer({ book }) {
     if (!currentHtml || !contentRef.current) return;
     contentRef.current.scrollTop = 0;
     setTimeout(() => {
-      const isSeeking = pendingSeekFractionRef.current !== null;
+      const isSeekingFrac = pendingSeekFractionRef.current !== null;
+      const isSeekingIdx = pendingSeekSentenceIdxRef.current !== null;
+      const isSeeking = isSeekingFrac || isSeekingIdx;
       const willAutoPlay = !isSeeking && isPlayingRef.current;
       
       const freshSentences = refreshSentences(willAutoPlay);
 
       if (isSeeking && freshSentences?.length > 0) {
-        const targetFrac = pendingSeekFractionRef.current;
-        pendingSeekFractionRef.current = null;
+        let targetSentenceIdx = 0;
         
-        const targetSentenceIdx = Math.floor(targetFrac * freshSentences.length);
+        if (isSeekingFrac) {
+            const targetFrac = pendingSeekFractionRef.current;
+            pendingSeekFractionRef.current = null;
+            targetSentenceIdx = Math.floor(targetFrac * freshSentences.length);
+        } else if (isSeekingIdx) {
+            targetSentenceIdx = pendingSeekSentenceIdxRef.current;
+            pendingSeekSentenceIdxRef.current = null;
+        }
+        
         const clampedIdx = Math.max(0, Math.min(targetSentenceIdx, freshSentences.length - 1));
         
         setTimeout(() => {
@@ -109,9 +129,23 @@ export default function EpubViewer({ book }) {
   // ── Mise à l'échelle CSS ─────────────────────────────────────────────
   useEffect(() => {
     if (contentRef.current) {
-      contentRef.current.style.fontSize = `${preferences.fontSize}px`;
-      // No longer calling refreshSentences here, allowing the DOM to retain the highlight markers
-      // and preventing the sentenceIdx from resetting to 0.
+      const container = contentRef.current;
+      const oldScroll = container.scrollTop;
+      const oldHeight = Math.max(1, container.scrollHeight - container.clientHeight);
+      const fraction = oldScroll / oldHeight;
+
+      container.style.fontSize = `${preferences.fontSize}px`;
+
+      setTimeout(() => {
+         const mark = container.querySelector('mark.tts-highlight');
+         if (mark) {
+             const targetScroll = Math.max(0, mark.offsetTop - container.clientHeight / 2);
+             container.scrollTop = targetScroll;
+         } else {
+             const newHeight = Math.max(1, container.scrollHeight - container.clientHeight);
+             container.scrollTop = fraction * newHeight;
+         }
+      }, 50);
     }
   }, [preferences.fontSize]);
 
@@ -163,6 +197,30 @@ export default function EpubViewer({ book }) {
       }
     }
   }, [chapterWeights, totalChapters, localChapterIdx, isPlayingRef, stop, loadChapter, sentences.length, playFrom, seekToPhrase]);
+
+  // ── Recherche vers un signet ───────────────────────────────────────────
+  const handleBookmarkSeek = useCallback(async (bookmark) => {
+    if (!bookmark) return;
+    
+    wasPlayingRef.current = isPlayingRef.current;
+    if (isPlayingRef.current) {
+      window.speechSynthesis?.cancel();
+    }
+    stop();
+
+    if (bookmark.chapterIdx !== localChapterIdx) {
+      pendingSeekSentenceIdxRef.current = bookmark.sentenceIdx || 0;
+      await loadChapter(bookmark.chapterIdx);
+    } else {
+      const clampedIdx = Math.max(0, Math.min(bookmark.sentenceIdx || 0, sentences.length - 1));
+      if (wasPlayingRef.current) {
+          wasPlayingRef.current = false;
+          playFrom(clampedIdx);
+      } else {
+          seekToPhrase(clampedIdx);
+      }
+    }
+  }, [localChapterIdx, isPlayingRef, stop, loadChapter, sentences.length, playFrom, seekToPhrase]);
 
   // ── Auto-chargement du chapitre suivant ────────────────────────────────
   const onChapterEnd = useCallback(async () => {
@@ -231,6 +289,37 @@ export default function EpubViewer({ book }) {
   return (
     <div className="reader-shell">
 
+      {error && (
+        <div className="absolute inset-0 bg-[#070b12]/95 flex flex-col items-center justify-center p-6 text-center z-[100]" style={{ zIndex: 100 }}>
+          <div className="text-5xl mb-4">⚠️</div>
+          <h3 className="text-xl font-bold text-white mb-2">Erreur de chargement</h3>
+          <p className="text-sm text-[#8b949e] max-w-lg mb-6 whitespace-pre-wrap font-mono bg-black/40 p-4 rounded-lg border border-white/10 text-left overflow-auto max-h-60">
+            {error}
+          </p>
+          <div className="flex gap-4">
+            <button
+              onClick={() => {
+                setError(null);
+                const savedIdx = getSavedChapterIdx();
+                if (book?.file) initBook(book.file, savedIdx);
+              }}
+              className="btn-primary"
+            >
+              Réessayer
+            </button>
+            <button
+              onClick={() => {
+                setError(null);
+                useReaderStore.getState().closeBook();
+              }}
+              className="btn-ghost"
+            >
+              Retour
+            </button>
+          </div>
+        </div>
+      )}
+
       <NavigationBar
         title={bookMeta?.title || book?.title || 'Chargement…'}
         chapter={currentChapter}
@@ -265,6 +354,7 @@ export default function EpubViewer({ book }) {
             onSelectChapter={(idx) => {
               loadChapter(idx);
             }}
+            onSelectBookmark={handleBookmarkSeek}
             onClose={() => setShowToc(false)}
           />
         </div>
@@ -289,6 +379,8 @@ export default function EpubViewer({ book }) {
             disableAutoScroll={disableAutoScroll}
             handleNextChapterManual={handleNextChapterManual}
             handlePrevChapterManual={handlePrevChapterManual}
+            onDoubleClick={playFromSelection}
+            onContextMenu={handleContextMenu}
           />
         </div>
 

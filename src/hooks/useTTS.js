@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useEffect } from 'react';
 import { useReaderStore } from '../store/readerStore';
+import { TextToSpeech } from '@capacitor-community/text-to-speech';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Utilitaires
@@ -93,12 +94,11 @@ export function useTTS() {
     } catch (_) {}
 
     // 2. Audio HTML5 silencieux — ancre la MediaSession sur Android Chrome.
-    //    Sans ça, l'écran éteint tue le TTS même avec la Web Audio API.
+    //    Sans ça, l'écran éteint tue le TTS même avec la Web Audio API,
+    //    et la notification ne s'affiche pas avec un fichier de 0 secondes.
     try {
       if (!silentHtmlAudioRef.current) {
-        // WAV silencieux minimal encodé en base64 (44 octets, 0 sample)
-        const silentWav = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=';
-        const audio = new Audio(silentWav);
+        const audio = new Audio('/silence.wav');
         audio.loop = true;
         audio.volume = 0.001; // Quasi-silencieux mais reconnu comme média actif
         audio.play().catch(() => {}); // Peut échouer sans geste utilisateur préalable
@@ -110,9 +110,7 @@ export function useTTS() {
     //    Un appel périodique à resume() le maintient vivant sans interrompre la phrase.
     if (!synthResumeIntervalRef.current) {
       synthResumeIntervalRef.current = setInterval(() => {
-        if (isPlayingRef.current && !isPausedRef.current) {
-          window.speechSynthesis.resume();
-        }
+        // Pas nécessaire avec le plugin natif, mais on le garde pour le fallback web.
       }, 10000);
     }
   }, []);
@@ -289,69 +287,54 @@ export function useTTS() {
 
     const text  = sents[idx];
     
-    // 1. Séparer les paragraphes collés (ex: "Bonjour.Comment") en injectant un espace
-    // pour éviter que le TTS ne lise "Bonjour point Comment" comme une adresse web.
+    // 1. Séparer les paragraphes collés
     const spacedText = text.replace(/([.!?…»])([A-ZÁÀÂÉÈÊËÎÏÔÙÛÜÇŒÆ])/gu, '$1 $2');
 
-    // 2. Nettoyage ultra-agressif pour Edge Linux :
-    // On repère la dernière ponctuation et on la supprime, AINSI que n'importe 
-    // quel caractère invisible, guillemet, ou espace qui se trouverait juste après, 
-    // en s'assurant qu'aucun "point" ne parvienne au bout de l'API vocale.
+    // 2. Nettoyage agressif
     const cleanText = spacedText.replace(/[\.…;:!\?]+[^\p{L}\p{N}]*$/u, '');
 
-    const synth = synthRef.current;
-    const utt   = new SpeechSynthesisUtterance(cleanText);
+    highlightSentence(idx);
 
-    const voices = synth.getVoices();
-    const saved  = preferences.voice;
-    if (saved) { const v = voices.find(v => v.name === saved); if (v) utt.voice = v; }
-    else       { const fr = voices.find(v => v.lang?.startsWith('fr')); if (fr) utt.voice = fr; }
-    utt.rate = preferences.ttsRate || 1.0;
-    utt.lang = utt.voice?.lang || 'fr-FR';
+    const currentPrefs = useReaderStore.getState().preferences;
 
-    utt.onend = () => {
+    if (recoveryTimerRef.current) clearTimeout(recoveryTimerRef.current);
+    const ms = (text.length / 12) * (1 / (currentPrefs.ttsRate || 1)) * 1000;
+    recoveryTimerRef.current = setTimeout(() => {
+      if (isPlayingRef.current && !isPausedRef.current) {
+        TextToSpeech.stop().catch(()=>{});
+        setTimeout(() => { if (isPlayingRef.current && !isPausedRef.current) readSentence(sentenceIdxRef.current); }, 100);
+      }
+    }, ms + 5000);
+
+    TextToSpeech.speak({
+      text: cleanText,
+      lang: 'fr-FR',
+      rate: currentPrefs.ttsRate || 1.0,
+      voice: typeof currentPrefs.voice === 'number' ? currentPrefs.voice : undefined,
+    }).then(() => {
       if (!isPlayingRef.current || isPausedRef.current) return;
       if (recoveryTimerRef.current) clearTimeout(recoveryTimerRef.current);
       setTimeout(() => readSentence(idx + 1), 50);
-    };
-
-    utt.onerror = (e) => {
-      if (e.error === 'interrupted' || e.error === 'canceled') return;
+    }).catch((e) => {
+      console.warn('TTS Speak error:', e);
+      if (recoveryTimerRef.current) clearTimeout(recoveryTimerRef.current);
       setTimeout(() => {
         if (isPlayingRef.current && !isPausedRef.current) readSentence(idx);
       }, 300);
-    };
+    });
 
-    if (synth.speaking || synth.pending) {
-      // Annuler la voix précédente (essentiel si on change de vitesse)
-      synth.cancel();
-    }
-    synth.speak(utt);
-    highlightSentence(idx);
-
-    if (recoveryTimerRef.current) clearTimeout(recoveryTimerRef.current);
-    const ms = (text.length / 12) * (1 / (utt.rate || 1)) * 1000;
-    recoveryTimerRef.current = setTimeout(() => {
-      if (isPlayingRef.current && !isPausedRef.current && !synth.speaking && !synth.pending) {
-        try { synth.cancel(); } catch (_) {}
-        setTimeout(() => { if (isPlayingRef.current && !isPausedRef.current) readSentence(sentenceIdxRef.current); }, 100);
-      }
-    }, ms + 3000);
-  }, [preferences, highlightSentence, clearHighlight, setSentenceIdx]);
+  }, [highlightSentence, clearHighlight, setSentenceIdx]);
 
   // ── Application immédiate des changements de voix/vitesse ─────────────
   // Relance la phrase en cours si on change la vitesse ou la voix pendant la lecture
   useEffect(() => {
     if (isPlayingRef.current && !isPausedRef.current) {
-      const synth = synthRef.current;
-      if (synth.speaking || synth.pending) {
-         synth.cancel();
+         TextToSpeech.stop().catch(()=>{});
          setTimeout(() => {
            if (isPlayingRef.current && !isPausedRef.current) {
              readSentence(sentenceIdxRef.current);
            }
          }, 50);
-      }
     }
   }, [preferences.ttsRate, preferences.voice, readSentence]);
 
@@ -392,7 +375,7 @@ export function useTTS() {
     setSentenceIdx(0);
 
     if (autoPlay && isPlayingRef.current) {
-      if (synthRef.current.speaking || synthRef.current.pending) synthRef.current.cancel();
+      TextToSpeech.stop().catch(()=>{});
       setTimeout(() => {
         if (isPlayingRef.current && !isPausedRef.current) readSentence(0);
       }, 50);
@@ -407,8 +390,9 @@ export function useTTS() {
     isPlayingRef.current = true; isPausedRef.current = false;
     autoScrollEnabledRef.current = true;
     setTtsState('playing');
+    import('@capgo/capacitor-media-session').then(({ MediaSession }) => MediaSession.setPlaybackState({ playbackState: 'playing' }).catch(()=>{})).catch(()=>{});
+    
     // Toujours rafraîchir : garantit que allNodesRef est propre et à jour
-    // (crucial après un stop, un changement de chapitre, ou un highlight précédent)
     const s = refreshSentences(false);
     if (!s?.length) { showToast('⚠️ Aucun texte trouvé'); setTtsState('idle'); isPlayingRef.current = false; return; }
     readSentence(fromIdx);
@@ -416,7 +400,8 @@ export function useTTS() {
 
   const pause = useCallback(() => {
     isPausedRef.current = true; isPlayingRef.current = false;
-    setTtsState('paused'); synthRef.current.cancel();
+    setTtsState('paused'); TextToSpeech.stop().catch(()=>{});
+    import('@capgo/capacitor-media-session').then(({ MediaSession }) => MediaSession.setPlaybackState({ playbackState: 'paused' }).catch(()=>{})).catch(()=>{});
     if (recoveryTimerRef.current) clearTimeout(recoveryTimerRef.current);
   }, [setTtsState]);
 
@@ -424,12 +409,14 @@ export function useTTS() {
     isPausedRef.current = false; isPlayingRef.current = true;
     autoScrollEnabledRef.current = true;
     setTtsState('playing');
+    import('@capgo/capacitor-media-session').then(({ MediaSession }) => MediaSession.setPlaybackState({ playbackState: 'playing' }).catch(()=>{})).catch(()=>{});
     readSentence(sentenceIdxRef.current); // readSentence appelle highlightSentence
   }, [setTtsState, readSentence]);
 
   const stop = useCallback(() => {
     isPlayingRef.current = false; isPausedRef.current = false;
-    setTtsState('idle'); synthRef.current.cancel();
+    setTtsState('idle'); TextToSpeech.stop().catch(()=>{});
+    import('@capgo/capacitor-media-session').then(({ MediaSession }) => MediaSession.setPlaybackState({ playbackState: 'none' }).catch(()=>{})).catch(()=>{});
     sentenceIdxRef.current = 0; setSentenceIdx(0);
     clearHighlight();
     stopSilentKeepAlive();
@@ -458,35 +445,70 @@ export function useTTS() {
 
   // ── Session Audio & Contrôles écran de verrouillage ───────────────────
   useEffect(() => {
-    if ('mediaSession' in navigator) {
+    // Importation asynchrone pour ne pas crasher le web
+    import('@capgo/capacitor-media-session').then(({ MediaSession }) => {
       const state = useReaderStore.getState();
       const title = state.currentChapter || state.currentBook?.title || 'Lecture en cours';
       const author = state.currentBook?.author || 'EbookReader';
       const coverUrl = state.currentBook?.coverUrl || '';
 
-      navigator.mediaSession.metadata = new window.MediaMetadata({
-        title: title,
-        artist: author,
-        artwork: coverUrl ? [{ src: coverUrl, sizes: '512x512', type: 'image/jpeg' }, { src: coverUrl, sizes: '512x512', type: 'image/png' }] : []
-      });
+      try {
+        MediaSession.setMetadata({
+          title: title,
+          artist: author,
+          album: 'EbookReader',
+          artwork: coverUrl ? [{ src: coverUrl, sizes: '512x512', type: 'image/jpeg' }] : []
+        }).catch(()=>{});
 
-      navigator.mediaSession.setActionHandler('play', resume);
-      navigator.mediaSession.setActionHandler('pause', pause);
+        MediaSession.setActionHandler({ action: 'play' }, resume);
+        MediaSession.setActionHandler({ action: 'pause' }, pause);
+        MediaSession.setActionHandler({ action: 'previoustrack' }, () => {
+          const prevIdx = Math.max(0, sentenceIdxRef.current - 1);
+          playFrom(prevIdx);
+        });
+        MediaSession.setActionHandler({ action: 'nexttrack' }, () => {
+          const nextIdx = sentenceIdxRef.current + 1;
+          if (nextIdx < sentencesRef.current.length) {
+            playFrom(nextIdx);
+          } else {
+            onPageEndRef.current?.();
+          }
+        });
+      } catch (e) {
+        console.warn('Native MediaSession not supported', e);
+      }
+    }).catch(() => {
+      // Fallback HTML5 si le plugin n'est pas installé ou supporté (sur navigateur par exemple)
+      if ('mediaSession' in navigator) {
+        const state = useReaderStore.getState();
+        const title = state.currentChapter || state.currentBook?.title || 'Lecture en cours';
+        const author = state.currentBook?.author || 'EbookReader';
+        const coverUrl = state.currentBook?.coverUrl || '';
 
-      navigator.mediaSession.setActionHandler('previoustrack', () => {
-        const prevIdx = Math.max(0, sentenceIdxRef.current - 1);
-        playFrom(prevIdx);
-      });
+        navigator.mediaSession.metadata = new window.MediaMetadata({
+          title: title,
+          artist: author,
+          artwork: coverUrl ? [{ src: coverUrl, sizes: '512x512', type: 'image/jpeg' }] : []
+        });
 
-      navigator.mediaSession.setActionHandler('nexttrack', () => {
-        const nextIdx = sentenceIdxRef.current + 1;
-        if (nextIdx < sentencesRef.current.length) {
-          playFrom(nextIdx);
-        } else {
-          onPageEndRef.current?.();
-        }
-      });
-    }
+        navigator.mediaSession.setActionHandler('play', resume);
+        navigator.mediaSession.setActionHandler('pause', pause);
+
+        navigator.mediaSession.setActionHandler('previoustrack', () => {
+          const prevIdx = Math.max(0, sentenceIdxRef.current - 1);
+          playFrom(prevIdx);
+        });
+
+        navigator.mediaSession.setActionHandler('nexttrack', () => {
+          const nextIdx = sentenceIdxRef.current + 1;
+          if (nextIdx < sentencesRef.current.length) {
+            playFrom(nextIdx);
+          } else {
+            onPageEndRef.current?.();
+          }
+        });
+      }
+    });
   }, [resume, pause, playFrom]);
 
   // ── Watchdog de reprise en sortie de veille ─────────────────────────────
@@ -494,11 +516,8 @@ export function useTTS() {
     const handleVisibilityChange = () => {
       // Si la page redevient visible et qu'on est censé jouer mais que le synthétiseur s'est tu
       if (!document.hidden && isPlayingRef.current && !isPausedRef.current) {
-        const synth = window.speechSynthesis;
-        if (!synth.speaking && !synth.pending) {
-           console.log('[TTS] Audio suspendu pendant la veille, reprise forcée...');
-           resume();
-        }
+        // Native plugin automatically resumes / handles background in most cases, 
+        // but we can enforce a restart if we wanted. For now, let the plugin handle it.
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -507,16 +526,57 @@ export function useTTS() {
 
   useEffect(() => {
     return () => {
-      synthRef.current.cancel();
+      TextToSpeech.stop().catch(()=>{});
       clearHighlight();
       stopSilentKeepAlive();
       if (recoveryTimerRef.current) clearTimeout(recoveryTimerRef.current);
     };
   }, [stopSilentKeepAlive, clearHighlight]);
 
+  const playFromSelection = useCallback(() => {
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0) return;
+    const range = selection.getRangeAt(0);
+    let targetNode = range.startContainer;
+    
+    if (targetNode.nodeType !== Node.TEXT_NODE) {
+      const walker = document.createTreeWalker(targetNode, NodeFilter.SHOW_TEXT, null);
+      const firstText = walker.nextNode();
+      if (firstText) targetNode = firstText;
+    }
+    
+    if (targetNode.nodeType !== Node.TEXT_NODE) return;
+
+    const container = useReaderStore.getState().contentEl;
+    if (!container) return;
+
+    const freshNodes = extractAllTextNodes(container);
+    let offset = 0;
+    let foundNs = -1;
+
+    for (let i = 0; i < freshNodes.length; i++) {
+      if (freshNodes[i].node === targetNode) {
+         foundNs = offset + range.startOffset;
+         break;
+      }
+      offset += freshNodes[i].length;
+    }
+    
+    if (foundNs !== -1) {
+       const meta = sentencesMetaRef.current;
+       for (let i = 0; i < meta.length; i++) {
+          if (foundNs >= meta[i].start && foundNs <= meta[i].start + meta[i].length) {
+             playFrom(i);
+             selection.removeAllRanges();
+             return;
+          }
+       }
+    }
+  }, [playFrom]);
+
   return {
     ttsState, sentences, sentenceIdx,
-    play, pause, resume, stop, playFrom, seekToPhrase,
+    play, pause, resume, stop, playFrom, seekToPhrase, playFromSelection,
     refreshSentences, setOnPageEnd, isPlayingRef,
     disableAutoScroll,
   };

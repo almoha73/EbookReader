@@ -5,6 +5,10 @@ import react from '@vitejs/plugin-react'
 export default defineConfig({
   plugins: [react()],
 
+  // Chemins relatifs : indispensable pour que les assets fonctionnent
+  // dans la WebView Android de Capacitor (pas de serveur, fichiers locaux)
+  base: './',
+
   // epub.js utilise des globals Node.js (path, fs) que Vite doit polyfiller
   define: {
     global: 'globalThis',

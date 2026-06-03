@@ -38,12 +38,11 @@ export async function saveEpubFile(id, file) {
   }
 }
 
-// Charge le binaire EPUB depuis IndexedDB et le retourne en File
-export async function loadEpubFile(id, filename) {
+// Charge le binaire EPUB depuis IndexedDB et le retourne directement (ArrayBuffer ou null)
+export async function loadEpubFile(id) {
   try {
     const buffer = await epubStore.getItem(id);
-    if (!buffer) return null;
-    return new File([buffer], filename || `${id}.epub`, { type: 'application/epub+zip' });
+    return buffer;
   } catch (e) {
     console.error('[LibraryStorage] Erreur chargement EPUB:', e);
     return null;

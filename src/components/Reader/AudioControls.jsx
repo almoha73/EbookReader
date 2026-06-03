@@ -3,6 +3,7 @@
 
 import { useState, useEffect } from 'react';
 import { useReaderStore } from '../../store/readerStore';
+import { TextToSpeech } from '@capacitor-community/text-to-speech';
 
 export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, onGlobalSeek, sentenceCount, sentenceIdx, localChapterIdx, totalChapters, chapterWeights, cfi }) {
   const { preferences, setPreference, showToast, currentBook, addBookmark } = useReaderStore();
@@ -12,15 +13,25 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
 
   // Chargement des voix disponibles
   useEffect(() => {
-    const synth = window.speechSynthesis;
-    const loadVoices = () => {
-      const v = synth.getVoices().filter(v => v.lang?.toLowerCase().startsWith('fr'));
-      setVoices(v.length > 0 ? v : synth.getVoices().slice(0, 10));
+    const loadVoices = async () => {
+      try {
+        const { voices: allVoices } = await TextToSpeech.getSupportedVoices();
+        const mappedVoices = allVoices.map((v, i) => ({ ...v, globalIndex: i }));
+        const v = mappedVoices.filter(v => v.lang?.toLowerCase().startsWith('fr'));
+        
+        const finalVoices = v.length > 0 ? v : mappedVoices.slice(0, 10);
+        setVoices(finalVoices);
+        
+        // Si aucune voix n'est sélectionnée, on prend par défaut la première voix française
+        if (preferences.voice === undefined && finalVoices.length > 0) {
+          setPreference('voice', finalVoices[0].globalIndex);
+        }
+      } catch (e) {
+        console.warn('TextToSpeech non disponible', e);
+      }
     };
     loadVoices();
-    synth.addEventListener('voiceschanged', loadVoices);
-    return () => synth.removeEventListener('voiceschanged', loadVoices);
-  }, []);
+  }, [preferences.voice, setPreference]);
 
   const isPlaying = ttsState === 'playing';
   const isPaused = ttsState === 'paused';
@@ -243,17 +254,26 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
             <div className="absolute bottom-12 right-0 glass-card p-2 min-w-56 max-h-48 overflow-y-auto z-50">
               <p className="text-xs text-dark-400 px-2 pb-2 font-medium">Choisir une voix</p>
               {voices.length === 0 && (
-                <p className="text-xs text-dark-400 px-2">Aucune voix disponible</p>
+                <div className="px-2 pb-2">
+                  <p className="text-xs text-dark-400 mb-2">Aucune voix disponible.</p>
+                  <button 
+                    onClick={() => TextToSpeech.openInstall()}
+                    className="w-full btn-primary text-xs py-1"
+                  >
+                    Installer la voix Android
+                  </button>
+                </div>
               )}
               {voices.map((voice) => (
                 <button
                   key={voice.name}
                   onClick={() => {
-                    setPreference('voice', voice.name);
+                    // Typeof check to clean up old string preferences from window.speechSynthesis
+                    setPreference('voice', voice.globalIndex);
                     setShowVoices(false);
                   }}
                   className={`w-full text-left px-3 py-1.5 rounded-lg text-xs transition-all duration-150 ${
-                    preferences.voice === voice.name
+                    preferences.voice === voice.globalIndex
                       ? 'bg-brand-500/20 text-brand-400'
                       : 'text-dark-400 hover:bg-white/5 hover:text-white'
                   }`}

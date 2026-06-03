@@ -81,39 +81,43 @@ export function useEpubContent() {
   const [localChapterIdx, setLocalChapterIdx] = useState(0);
   const [totalChapters,   setTotalChapters]   = useState(0);
   const [bookMeta,        setBookMeta]        = useState(null);
+  const [error,           setError]           = useState(null);
   
   // Weights for ultra-precise progress calculation
   const [chapterWeights,  setChapterWeights]  = useState({ offsets: [], weights: [], total: 0 });
 
-  // ── Calcule le poids textuel brut de chaque chapitre sans bloquer l'UI ni crasher la RAM ──
+  // ── Calcule le poids de chaque chapitre sans crasher la RAM (OOM sur Android) ──
   const computeChapterWeights = async (chaps, bookObj) => {
     let total = 0;
     const weights = new Array(chaps.length).fill(100);
     const offsets = new Array(chaps.length).fill(0);
     
-    // Pour chaque chapitre, récupérer le texte brut sans le mettre en cache
+    // Pour chaque chapitre, on tente de récupérer sa taille décompressée si possible
+    // Sinon on lui donne un poids fixe, pour éviter de charger son DOM complet en RAM
     for (let i = 0; i < chaps.length; i++) {
         try {
             const item = bookObj.spine.get(chaps[i].spineIdx);
+            let size = 100; // Poids par défaut
             
-            // Évite item.load() qui garde le document en RAM (provoquant des crashs React)
-            // Passe direct via book.load qui retourne le Document XML, qu'on lit, puis qui est garbagé
-            let textLen = 50;
-            if (item.href) {
-               const doc = await bookObj.load(item.href);
-               const body = doc?.querySelector?.('body') ?? doc?.getElementsByTagName?.('body')?.[0] ?? doc;
-               textLen = body?.textContent?.length || 50;
+            // Si on peut lire la taille depuis l'archive sans la décompresser :
+            if (item.href && bookObj.archive && bookObj.archive.zip && bookObj.archive.zip.files) {
+                // Résoudre le chemin complet dans le zip
+                let zipPath = item.href;
+                // ePubjs gère parfois les href avec des chemins relatifs, on tente de trouver le fichier
+                const fileKeys = Object.keys(bookObj.archive.zip.files);
+                const match = fileKeys.find(k => k.endsWith(item.href));
+                if (match && bookObj.archive.zip.files[match]._data) {
+                    const uncompressed = bookObj.archive.zip.files[match]._data.uncompressedSize;
+                    if (uncompressed) size = uncompressed;
+                }
             }
             
-            const size = Math.max(textLen, 10);
             weights[i] = size;
             total += size;
         } catch(e) {
             weights[i] = 100;
             total += 100;
         }
-        // Attendre 20ms entre chaque chapitre pour laisser le navigateur souffler (évite le freeze)
-        await new Promise(r => setTimeout(r, 20));
     }
     
     // Normaliser en pourcentages stricts
@@ -164,6 +168,7 @@ export function useEpubContent() {
         }
       } catch (e) {
         console.error('[EpubContent] Erreur chargement chapitre', idx, e);
+        setError(`Erreur chapitre ${idx} : ${e.message}\n${e.stack || ''}`);
         chapter.html = `<p><em>[Erreur de chargement: ${e.message}]</em></p>`;
       }
     }
@@ -175,28 +180,43 @@ export function useEpubContent() {
     return true;
   }, [setCurrentChapter, setCurrentChapterIdx]);
 
-  // ── Charge le livre EPUB depuis un File ───────────────────────────────
+  // ── Charge le livre EPUB depuis un File ou ArrayBuffer ───────────────────────────────
   const initBook = useCallback(async (file, savedChapterIdx = 0) => {
     setIsLoading(true);
     setEpubReady(false);
     setCurrentHtml('');
+    setError(null);
 
     if (bookRef.current) {
       try { bookRef.current.destroy(); } catch (_) {}
     }
 
     try {
-      const buffer = await file.arrayBuffer();
+      let buffer;
+      if (file instanceof ArrayBuffer) {
+        buffer = file;
+      } else if (file && typeof file.arrayBuffer === 'function') {
+        buffer = await file.arrayBuffer();
+      } else if (file && file.buffer instanceof ArrayBuffer) {
+        buffer = file.buffer;
+      } else {
+        throw new Error("Le format du fichier fourni n'est pas supporté (attendu : ArrayBuffer, File ou Blob).");
+      }
+
       const book   = ePub(buffer);
       bookRef.current = book;
 
       // book.ready attend que tout soit chargé (spine, metadata, navigation)
-      await book.ready;
+      // avec un timeout de 12 secondes pour éviter tout blocage infini sur Android
+      await Promise.race([
+        book.ready,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("Délai d'attente dépassé lors du chargement du livre (12s)")), 12000))
+      ]);
 
       // Métadonnées — accessibles directement après book.ready
       const pkg  = book.package?.metadata || book.packaging?.metadata || {};
       const meta = {
-        title:  pkg.title  || file.name || 'Sans titre',
+        title:  pkg.title  || (file && typeof file.name === 'string' ? file.name : 'Sans titre'),
         author: pkg.creator || pkg.author || '',
       };
       setBookMeta(meta);
@@ -257,6 +277,7 @@ export function useEpubContent() {
       return meta;
     } catch (e) {
       console.error('[EpubContent] Erreur initBook', e);
+      setError(`Erreur d'initialisation : ${e.message}\n${e.stack || ''}`);
       showToast('❌ Erreur lors du chargement du livre');
       setIsLoading(false);
       return null;
@@ -284,5 +305,7 @@ export function useEpubContent() {
     loadChapter,
     goNextChapter,
     goPrevChapter,
+    error,
+    setError,
   };
 }
