@@ -88,6 +88,10 @@ export default function LibraryView() {
         }
       } catch (e) {}
 
+      // Indispensable : attendre que TOUS les processus internes d'epub.js (navigation, etc) 
+      // soient terminés AVANT de détruire l'objet, sinon des promesses orphelines 
+      // plantent en essayant de lire this.loading.navigation qui a été effacé par destroy()
+      await book.ready.catch(() => {});
       book.destroy();
 
       const bookData = {
