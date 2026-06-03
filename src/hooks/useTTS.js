@@ -10,7 +10,12 @@ import { TextToSpeech } from '@capacitor-community/text-to-speech';
 
 function splitIntoSentences(text) {
   if (!text?.trim()) return [];
-  const raw = text.split(/(?<=[.!?…»])\s+(?=[A-ZÁÀÂÉÈÊËÎÏÔÙÛÜÇŒÆ«"—\-\d])/u);
+  // Séparation classique sur les espaces
+  // OU séparation sans espace (paragraphes collés dans le DOM) si :
+  // 1. La suite est une lettre maj/tiret/guillemet ET le précédent n'est pas une maj (évite U.S.A.)
+  // 2. La suite est un chiffre ET le précédent n'est ni maj ni chiffre (évite 3.14)
+  const regex = /(?<=[.!?…»])\s+(?=[A-ZÁÀÂÉÈÊËÎÏÔÙÛÜÇŒÆ«"—\-\d])|(?<=[^A-ZÁÀÂÉÈÊËÎÏÔÙÛÜÇŒÆ\s][.!?…»])(?=[A-ZÁÀÂÉÈÊËÎÏÔÙÛÜÇŒÆ«"—\-])|(?<=[^A-ZÁÀÂÉÈÊËÎÏÔÙÛÜÇŒÆ\s\d][.!?…»])(?=\d)/u;
+  const raw = text.split(regex);
   return raw.map(s => s.trim()).filter(s => s.length > 3);
 }
 
