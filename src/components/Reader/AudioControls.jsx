@@ -19,7 +19,15 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
         const mappedVoices = allVoices.map((v, i) => ({ ...v, globalIndex: i }));
         const v = mappedVoices.filter(v => v.lang?.toLowerCase().startsWith('fr'));
         
-        const finalVoices = v.length > 0 ? v : mappedVoices.slice(0, 10);
+        // Dédoublonner par nom
+        const uniqueVoicesMap = new Map();
+        for (const voice of v) {
+            if (!uniqueVoicesMap.has(voice.name)) {
+                uniqueVoicesMap.set(voice.name, voice);
+            }
+        }
+        
+        const finalVoices = uniqueVoicesMap.size > 0 ? Array.from(uniqueVoicesMap.values()) : mappedVoices.slice(0, 10);
         setVoices(finalVoices);
         
         // Si aucune voix n'est sélectionnée, on prend par défaut la première voix française
@@ -268,10 +276,10 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
 
           {showVoices && (
             <div className="absolute bottom-12 right-0 glass-card p-2 min-w-56 max-h-48 overflow-y-auto z-50">
-              <p className="text-xs text-dark-400 px-2 pb-2 font-medium">Choisir une voix</p>
+              <p className="text-xs text-gray-200 px-2 pb-2 font-medium">Choisir une voix</p>
               {voices.length === 0 && (
                 <div className="px-2 pb-2">
-                  <p className="text-xs text-dark-400 mb-2">Aucune voix disponible.</p>
+                  <p className="text-xs text-gray-300 mb-2">Aucune voix disponible.</p>
                   <button 
                     onClick={() => TextToSpeech.openInstall()}
                     className="w-full btn-primary text-xs py-1"
@@ -291,7 +299,7 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
                   className={`w-full text-left px-3 py-1.5 rounded-lg text-xs transition-all duration-150 ${
                     preferences.voice === voice.globalIndex
                       ? 'bg-brand-500/20 text-brand-400'
-                      : 'text-dark-400 hover:bg-white/5 hover:text-white'
+                      : 'text-gray-300 hover:bg-white/10 hover:text-white'
                   }`}
                 >
                   <span className="font-medium">{voice.name}</span>

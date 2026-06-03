@@ -70,7 +70,7 @@ html, body, #root {
     @apply px-3 py-2 rounded-lg text-sm transition-all duration-200 select-none;
     background: rgba(255,255,255,0.05);
     border: 1px solid var(--glass-border);
-    color: #8b949e;
+    color: #c7d2f0;
   }
   .btn-ghost:hover {
     background: rgba(255,255,255,0.1);
@@ -82,7 +82,7 @@ html, body, #root {
     @apply flex items-center justify-center w-10 h-10 rounded-xl transition-all duration-200 select-none;
     background: rgba(255,255,255,0.06);
     border: 1px solid var(--glass-border);
-    color: #8b949e;
+    color: #c7d2f0;
   }
   .btn-icon:hover {
     background: rgba(88, 166, 255, 0.15);
@@ -188,7 +188,7 @@ html, body, #root {
 
 .chapter-name {
   font-size: 0.72rem;
-  color: #6e7681;
+  color: #a5b3ce;
   margin: 2px 0 0;
   white-space: nowrap;
   overflow: hidden;
@@ -223,7 +223,7 @@ html, body, #root {
 
 .progress-label {
   font-size: 0.72rem;
-  color: #6e7681;
+  color: #a5b3ce;
   font-family: 'Inter', monospace;
   min-width: 30px;
 }
