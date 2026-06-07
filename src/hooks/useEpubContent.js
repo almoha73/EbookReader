@@ -284,14 +284,15 @@ export function useEpubContent() {
     }
   }, [setEpubReady, showToast, loadChapter, setCurrentHtml]);
 
-  // ── Navigation entre chapitres ─────────────────────────────────────────
   const goNextChapter = useCallback(async () => {
-    return await loadChapter(localChapterIdx + 1);
-  }, [localChapterIdx, loadChapter]);
+    const latestIdx = useReaderStore.getState().currentChapterIdx;
+    return await loadChapter(latestIdx + 1);
+  }, [loadChapter]);
 
   const goPrevChapter = useCallback(async () => {
-    return await loadChapter(localChapterIdx - 1);
-  }, [localChapterIdx, loadChapter]);
+    const latestIdx = useReaderStore.getState().currentChapterIdx;
+    return await loadChapter(latestIdx - 1);
+  }, [loadChapter]);
 
   return {
     isLoading,

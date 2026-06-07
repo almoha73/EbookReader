@@ -1,8 +1,8 @@
 // src/components/Reader/NavigationBar.jsx
 import { useReaderStore } from '../../store/readerStore';
 
-export default function NavigationBar({ title, chapter, onSettings, showSettings, onToggleToc, showToc }) {
-  const { closeBook, totalLocations, currentLocation } = useReaderStore();
+export default function NavigationBar({ title, chapter, onSettings, showSettings, onToggleToc, showToc, onSaveBookmark }) {
+  const { closeBook, totalLocations, currentLocation, preferences, setPreference } = useReaderStore();
 
   const progress = totalLocations > 0
     ? Math.round((currentLocation / totalLocations) * 100)
@@ -39,10 +39,23 @@ export default function NavigationBar({ title, chapter, onSettings, showSettings
         </div>
       )}
 
+      {/* Bouton sauvegarder marque-page */}
+      <button
+        onClick={onSaveBookmark}
+        className="btn-icon ml-auto mr-2"
+        title="Sauvegarder un signet"
+        aria-label="Sauvegarder"
+        id="save-bookmark-btn"
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+        </svg>
+      </button>
+
       {/* Raccourci Chapitres (TOC) */}
       <button
         onClick={onToggleToc}
-        className={`btn-icon ml-auto mr-2 ${showToc ? 'active text-blue-400' : ''}`}
+        className={`btn-icon mr-2 ${showToc ? 'active text-blue-400' : ''}`}
         title="Table des Matières"
         aria-label="Chapitres"
       >
@@ -54,6 +67,27 @@ export default function NavigationBar({ title, chapter, onSettings, showSettings
           <line x1="3" y1="12" x2="3.01" y2="12"/>
           <line x1="3" y1="18" x2="3.01" y2="18"/>
         </svg>
+      </button>
+
+      {/* Bouton Mode Audio / Lecture seule */}
+      <button
+        onClick={() => setPreference('audioMode', !preferences.audioMode)}
+        className={`btn-icon mr-2 ${preferences.audioMode ? 'active text-blue-400' : ''}`}
+        title={preferences.audioMode ? "Désactiver le Mode Audio (Lecture seule)" : "Activer le Mode Audio"}
+        aria-label="Mode Audio"
+        id="audio-mode-btn"
+      >
+        {preferences.audioMode ? (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M3 18v-6a9 9 0 0 1 18 0v6"/>
+            <path d="M21 19a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3zM3 19a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2v-3a2 2 0 0 0-2-2H3z"/>
+          </svg>
+        ) : (
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+          </svg>
+        )}
       </button>
 
       {/* Bouton Paramètres */}

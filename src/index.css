@@ -14,6 +14,65 @@
   --glass-bg: rgba(22, 27, 34, 0.98);
   --glass-border: rgba(255, 255, 255, 0.08);
   --glow-brand: rgba(88, 166, 255, 0.3);
+
+  /* Theme variables default (Dark) */
+  --theme-bg-shell: radial-gradient(ellipse at 15% 40%, rgba(56, 139, 253, 0.07) 0%, transparent 55%),
+                    radial-gradient(ellipse at 85% 20%, rgba(188, 140, 255, 0.07) 0%, transparent 55%),
+                    #070b12;
+  --theme-bg-stage: rgba(13, 17, 23, 0.55);
+  --theme-text-main: #dde4f0;
+  --theme-text-heading: #eef2ff;
+  --theme-text-muted: #9ba8c5;
+  --theme-border: rgba(255, 255, 255, 0.07);
+  --theme-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --theme-backdrop-filter: blur(16px);
+}
+
+/* ── Theme Overrides ─────────────────────────────────────────────────────── */
+.theme-dark {
+  --theme-bg-shell: radial-gradient(ellipse at 15% 40%, rgba(56, 139, 253, 0.07) 0%, transparent 55%),
+                    radial-gradient(ellipse at 85% 20%, rgba(188, 140, 255, 0.07) 0%, transparent 55%),
+                    #070b12;
+  --theme-bg-stage: rgba(13, 17, 23, 0.55);
+  --theme-text-main: #dde4f0;
+  --theme-text-heading: #eef2ff;
+  --theme-text-muted: #9ba8c5;
+  --theme-border: rgba(255, 255, 255, 0.07);
+  --theme-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --theme-backdrop-filter: blur(16px);
+}
+
+.theme-sepia {
+  --theme-bg-shell: #ede4d0;
+  --theme-bg-stage: #f6f0e0;
+  --theme-text-main: #4f3c28;
+  --theme-text-heading: #362514;
+  --theme-text-muted: #77624c;
+  --theme-border: rgba(95, 75, 50, 0.15);
+  --theme-shadow: 0 8px 32px rgba(95, 75, 50, 0.1);
+  --theme-backdrop-filter: none;
+}
+
+.theme-light {
+  --theme-bg-shell: #f0f2f5;
+  --theme-bg-stage: #ffffff;
+  --theme-text-main: #24292f;
+  --theme-text-heading: #000000;
+  --theme-text-muted: #57606a;
+  --theme-border: rgba(0, 0, 0, 0.1);
+  --theme-shadow: 0 8px 32px rgba(0, 0, 0, 0.06);
+  --theme-backdrop-filter: none;
+}
+
+.theme-mint {
+  --theme-bg-shell: #d5e5db;
+  --theme-bg-stage: #e3f0e8;
+  --theme-text-main: #1e3827;
+  --theme-text-heading: #122418;
+  --theme-text-muted: #43614c;
+  --theme-border: rgba(30, 56, 39, 0.12);
+  --theme-shadow: 0 8px 32px rgba(30, 56, 39, 0.06);
+  --theme-backdrop-filter: none;
 }
 
 /* ── Base Reset ─────────────────────────────────────────────────────────── */
@@ -247,10 +306,8 @@ html, body, #root {
   flex-direction: column;
   height: 100%;
   overflow: hidden;
-  background:
-    radial-gradient(ellipse at 15% 40%, rgba(56, 139, 253, 0.07) 0%, transparent 55%),
-    radial-gradient(ellipse at 85% 20%, rgba(188, 140, 255, 0.07) 0%, transparent 55%),
-    #070b12;
+  background: var(--theme-bg-shell);
+  transition: background 0.3s ease;
 }
 
 /* ── Reading Area (flex row: prev | book | next) ─────────────────────────── */
@@ -273,12 +330,14 @@ html, body, #root {
   max-width: 860px;
   margin: 0 auto;
   height: 100%;
-  background: rgba(13, 17, 23, 0.55);
-  backdrop-filter: blur(16px);
+  background: var(--theme-bg-stage);
+  backdrop-filter: var(--theme-backdrop-filter);
+  -webkit-backdrop-filter: var(--theme-backdrop-filter);
   border-radius: 12px;
-  border: 1px solid rgba(255,255,255,0.07);
-  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  border: 1px solid var(--theme-border);
+  box-shadow: var(--theme-shadow);
   overflow: hidden;
+  transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
 }
 
 /* ── Div de lecture (Scroll Continu pur) ─────────────────────────── */
@@ -287,14 +346,21 @@ html, body, #root {
   inset: 0;
   overflow-y: auto;
   overflow-x: hidden;
-  padding: 32px 52px 140px 52px; /* Pad bottom pour ne pas coller à la fin et laisser place aux contrôles */
-  color: #dde4f0;
+  padding: 72px 52px 40px 52px; /* Remplissage par défaut (lecture seule) */
+  color: var(--theme-text-main);
   line-height: 1.8;
   font-family: 'Georgia', 'Palatino', 'Times New Roman', serif;
   /* PAS de scroll-behavior: smooth ici — le téléprompteur JS gère ça en requestAnimationFrame */
 
   /* Masquer la scrollbar visuellement mais conserver la fonctionnalité */
   scrollbar-width: none;
+  transition: color 0.3s ease;
+}
+.reader-content.audio-mode-padding {
+  padding-bottom: 140px;
+}
+.reader-content.clean-mode-padding {
+  padding-bottom: 40px;
 }
 .reader-content::-webkit-scrollbar { display: none; }
 
@@ -308,23 +374,26 @@ html, body, #root {
   font-size: 1.4em;
   font-weight: 700;
   margin: 1.5em 0 0.8em;
-  color: #eef2ff;
+  color: var(--theme-text-heading);
   text-align: center;
+  transition: color 0.3s ease;
 }
 .reader-content h3, .reader-content h4 {
   font-size: 1.1em;
   font-weight: 600;
   margin: 1.2em 0 0.6em;
-  color: #c7d2f0;
+  color: var(--theme-text-heading);
+  transition: color 0.3s ease;
 }
 .reader-content em { font-style: italic; }
-.reader-content strong { font-weight: 700; color: #eef2ff; }
+.reader-content strong { font-weight: 700; color: var(--theme-text-heading); transition: color 0.3s ease; }
 .reader-content blockquote {
   border-left: 3px solid rgba(99, 102, 241, 0.5);
   margin: 1em 0;
   padding: 0.5em 1.2em;
-  color: #9ba8c5;
+  color: var(--theme-text-muted);
   font-style: italic;
+  transition: color 0.3s ease;
 }
 .reader-content .epub-img {
   max-width: 100%;
@@ -344,7 +413,13 @@ mark.tts-highlight {
 }
 @media (max-width: 600px) {
   .reader-content {
-    padding: 20px 20px 140px 20px;
+    padding: 70px 20px 40px 20px;
+  }
+  .reader-content.audio-mode-padding {
+    padding-bottom: 140px;
+  }
+  .reader-content.clean-mode-padding {
+    padding-bottom: 40px;
   }
 }
 
@@ -431,8 +506,9 @@ mark.tts-highlight {
 }
 
 .settings-panel.open {
-  max-height: 200px;
+  max-height: 500px;
   opacity: 1;
+  overflow-y: auto;
 }
 
 
@@ -475,7 +551,7 @@ mark.tts-highlight {
 /* ── Toast notification ─────────────────────────────────────────────────── */
 .toast {
   position: fixed;
-  bottom: 6rem;
+  top: calc(50% + 50px);
   left: 50%;
   transform: translateX(-50%) translateY(20px);
   padding: 0.75rem 1.25rem;
@@ -492,4 +568,53 @@ mark.tts-highlight {
 .toast.show {
   opacity: 1;
   transform: translateX(-50%) translateY(0);
+}
+
+/* ── Floating Action Button (FAB) for Auto-scroll ──────────────────────── */
+.autoscroll-fab {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 45;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  background: var(--glass-bg);
+  backdrop-filter: blur(12px) saturate(180%);
+  -webkit-backdrop-filter: blur(12px) saturate(180%);
+  border: 1px solid var(--glass-border);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  color: #58a6ff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.5s ease-in-out, visibility 0.5s ease-in-out;
+}
+
+.autoscroll-fab:hover {
+  background: rgba(88, 166, 255, 0.15);
+  border-color: rgba(88, 166, 255, 0.3);
+  color: #79c0ff;
+  transform: translate(-50%, -50%) scale(1.08) translateY(-2px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 20px rgba(88, 166, 255, 0.2);
+}
+
+.autoscroll-fab:active {
+  transform: translate(-50%, -50%) scale(0.95);
+}
+
+.autoscroll-fab.active {
+  background: linear-gradient(135deg, #388bfd, #58a6ff);
+  color: white;
+  border-color: transparent;
+  box-shadow: 0 8px 32px rgba(56, 139, 253, 0.35);
+}
+
+.normal-highlight {
+  background-color: transparent !important;
+  color: inherit !important;
+  border-radius: 3px;
+  transition: background-color 0.3s ease;
 }

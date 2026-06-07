@@ -14,6 +14,13 @@ const HIGHLIGHT_COLORS = [
   { label: 'Violet', value: 'rgba(188, 140, 255, 0.45)' },
 ];
 
+const THEMES = [
+  { id: 'dark', label: 'Sombre', bg: '#070b12', text: '#dde4f0', border: 'border-white/10' },
+  { id: 'sepia', label: 'Sépia', bg: '#f6f0e0', text: '#4f3c28', border: 'border-amber-800/20' },
+  { id: 'light', label: 'Clair', bg: '#ffffff', text: '#24292f', border: 'border-black/10' },
+  { id: 'mint', label: 'Menthe', bg: '#e3f0e8', text: '#1e3827', border: 'border-emerald-800/20' },
+];
+
 export default function DisplaySettings({ onFontSizeChange, onHighlightColorChange }) {
   const { preferences, setPreference } = useReaderStore();
 
@@ -99,6 +106,81 @@ export default function DisplaySettings({ onFontSizeChange, onHighlightColorChan
           >
             <span className="text-dark-800 font-medium">Texte</span>
           </span>
+        </div>
+
+        {/* Divider */}
+        <div className="hidden sm:block w-px h-8 bg-white/10" />
+
+        {/* Thème */}
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-dark-400 font-medium whitespace-nowrap">Thème</span>
+          <div className="flex gap-2">
+            {THEMES.map(({ id, label, bg, text, border }) => (
+              <button
+                key={id}
+                onClick={() => setPreference('theme', id)}
+                className={`flex items-center justify-center px-3 py-1.5 rounded-lg text-xs font-semibold border ${border} transition-all duration-200 shadow-sm`}
+                style={{ backgroundColor: bg, color: text }}
+                title={label}
+                aria-label={`Thème: ${label}`}
+              >
+                {label}
+                {(preferences.theme || 'dark') === id && (
+                  <span className="ml-1.5 text-[10px]">✓</span>
+                )}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Divider */}
+        <div className="hidden sm:block w-px h-8 bg-white/10" />
+
+        {/* Défilement Automatique */}
+        <div className="flex items-center gap-4">
+          <label className="flex items-center gap-2 text-xs text-gray-300 font-medium cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={preferences.autoScrollEnabled || false}
+              onChange={(e) => setPreference('autoScrollEnabled', e.target.checked)}
+              className="w-4 h-4 rounded border-white/20 bg-black/40 text-blue-500 focus:ring-blue-500 cursor-pointer"
+            />
+            <span>Défilement auto</span>
+          </label>
+          
+          {preferences.autoScrollEnabled && (
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-gray-400 whitespace-nowrap">Vitesse (px/s):</span>
+              <button
+                onClick={() => setPreference('autoScrollSpeed', Math.max(5, (preferences.autoScrollSpeed || 30) - 5))}
+                className="w-6 h-6 flex items-center justify-center bg-white/10 hover:bg-white/25 text-white rounded text-xs select-none"
+                title="Ralentir"
+              >
+                -
+              </button>
+              <input
+                type="number"
+                min="5"
+                max="300"
+                step="5"
+                value={preferences.autoScrollSpeed || 30}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value, 10);
+                  if (!isNaN(val)) {
+                    setPreference('autoScrollSpeed', Math.max(1, Math.min(500, val)));
+                  }
+                }}
+                className="w-12 h-6 bg-black/50 border border-white/10 rounded text-center text-xs text-white focus:outline-none focus:border-blue-500 font-mono"
+              />
+              <button
+                onClick={() => setPreference('autoScrollSpeed', Math.min(300, (preferences.autoScrollSpeed || 30) + 5))}
+                className="w-6 h-6 flex items-center justify-center bg-white/10 hover:bg-white/25 text-white rounded text-xs select-none"
+                title="Accélérer"
+              >
+                +
+              </button>
+            </div>
+          )}
         </div>
 
       </div>

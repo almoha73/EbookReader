@@ -25,6 +25,7 @@ function extractAllTextNodes(container) {
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const tag = node.parentElement?.tagName?.toLowerCase();
+      if (['script', 'style', 'mark', 'span'].includes(tag) && node.parentElement.className.includes('marker')) return NodeFilter.FILTER_ACCEPT;
       if (['script', 'style'].includes(tag)) return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_ACCEPT;
     }
@@ -35,6 +36,42 @@ function extractAllTextNodes(container) {
   }
   return nodes;
 }
+
+function injectSentenceMarkers(container, sentencesMeta) {
+  if (!container || !sentencesMeta || sentencesMeta.length === 0) return;
+  container.normalize();
+  const nodes = extractAllTextNodes(container);
+  
+  // Sort descending to not mess up offsets of earlier nodes
+  const sortedMetas = sentencesMeta.map((m, i) => ({ ...m, idx: i })).sort((a,b) => b.start - a.start);
+  
+  let currentTextNodeIdx = nodes.length - 1;
+  let offsetAcc = nodes.reduce((sum, n) => sum + n.length, 0);
+  
+  for (const meta of sortedMetas) {
+     while (currentTextNodeIdx >= 0) {
+        const n = nodes[currentTextNodeIdx];
+        const nodeStart = offsetAcc - n.length;
+        
+        if (meta.start >= nodeStart && meta.start <= offsetAcc) {
+           const localStart = meta.start - nodeStart;
+           try {
+               const range = document.createRange();
+               range.setStart(n.node, localStart);
+               range.setEnd(n.node, localStart);
+               const span = document.createElement('span');
+               span.id = `sent-marker-${meta.idx}`;
+               span.className = 'sentence-marker';
+               range.insertNode(span);
+           } catch(e) {}
+           break;
+        }
+        currentTextNodeIdx--;
+        offsetAcc -= n.length;
+     }
+  }
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Hook TTS
@@ -165,7 +202,7 @@ export function useTTS() {
     currentMarkRef.current = null;
   }, []);
 
-  const highlightSentence = useCallback((idx) => {
+  const highlightSentence = useCallback((idx, isNormalReading = false) => {
     clearHighlight();
 
     const sentMeta = sentencesMetaRef.current[idx];
@@ -184,8 +221,6 @@ export function useTTS() {
     let offset = 0;
     const marks = [];
 
-    console.log(`[TTS DEBUG] Sentence ${idx}: start=${start}, globalEnd=${globalEnd}, freshNodes=${freshNodes.length}`);
-
     for (let i = 0; i < freshNodes.length; i++) {
       const len = freshNodes[i].length;
       const ns  = offset;
@@ -195,8 +230,6 @@ export function useTTS() {
         const localStart = Math.max(0, start - ns);
         const localEnd   = Math.min(len, globalEnd - ns);
         
-        console.log(`[TTS DEBUG] Node ${i} MATCH: ns=${ns}, ne=${ne}, localStart=${localStart}, localEnd=${localEnd}, text="${freshNodes[i].text}"`);
-
         if (localStart < localEnd) {
           try {
             const textNode = freshNodes[i].node;
@@ -205,7 +238,7 @@ export function useTTS() {
             range.setEnd(textNode, localEnd);
             
             const mark = document.createElement('mark');
-            mark.className = 'tts-highlight';
+            mark.className = isNormalReading ? 'normal-highlight' : 'tts-highlight';
             range.surroundContents(mark);
             marks.push(mark);
           } catch (e) {
@@ -219,7 +252,7 @@ export function useTTS() {
     currentMarkRef.current = marks;
 
     // ── Téléprompteur : centre Y de la phrase ─────────────────────────────
-    if (marks.length > 0 && container) {
+    if (marks.length > 0 && container && !isNormalReading) {
       const rect  = marks[0].getBoundingClientRect();
       const cRect = container.getBoundingClientRect();
       // Si on est dans le viewport avec une vraie hauteur (pas caché)
@@ -228,6 +261,33 @@ export function useTTS() {
       }
     }
   }, [clearHighlight]);
+
+  const getActiveSentenceIdx = useCallback((targetY) => {
+    const sents = sentencesRef.current;
+    if (!sents || sents.length === 0) return 0;
+    const container = useReaderStore.getState().contentEl;
+    if (!container) return 0;
+    
+    let low = 0, high = sents.length - 1;
+    let best = 0;
+    while(low <= high) {
+       let mid = (low + high) >> 1;
+       let el = document.getElementById(`sent-marker-${mid}`);
+       if (!el) {
+          // Fallback if markers aren't injected yet
+          return Math.floor((targetY / Math.max(1, container.scrollHeight)) * sents.length);
+       }
+       // On calcule le Y absolu dans le conteneur
+       let y = el.offsetTop; 
+       if (y <= targetY) {
+          best = mid;
+          low = mid + 1;
+       } else {
+          high = mid - 1;
+       }
+    }
+    return best;
+  }, []);
 
   // ── Boucle Téléprompteur ───────────────────────────────────────────────────────
   // Principe : garder la phrase en cours CENTRÉE verticalement.
@@ -346,6 +406,12 @@ export function useTTS() {
     }).catch((e) => {
       console.warn('TTS Speak error:', e);
       if (recoveryTimerRef.current) clearTimeout(recoveryTimerRef.current);
+      
+      // Ignorer l'erreur si la lecture a été arrêtée ou mise en pause par l'utilisateur
+      if (isPausedRef.current || !isPlayingRef.current) {
+        return;
+      }
+      
       // Auto-pause to prevent infinite retry loop that causes screen jumping
       pause();
       showToast('⚠️ Erreur vocale, lecture en pause');
@@ -399,6 +465,10 @@ export function useTTS() {
       else          { meta[i] = { start: searchIdx, length: sents[i].length }; }
     }
     sentencesMetaRef.current = meta;
+    
+    // Inject invisible markers for tracking sentence position during scrolling
+    injectSentenceMarkers(container, meta);
+    
     sentenceIdxRef.current = 0;
     setSentenceIdx(0);
 
@@ -575,6 +645,13 @@ export function useTTS() {
   const playFromSelection = useCallback(() => {
     const selection = window.getSelection();
     if (!selection || selection.rangeCount === 0) return;
+
+    // Auto-activer le mode audio s'il est désactivé
+    const state = useReaderStore.getState();
+    if (!state.preferences.audioMode) {
+      state.setPreference('audioMode', true);
+    }
+
     const range = selection.getRangeAt(0);
     let targetNode = range.startContainer;
     
@@ -617,6 +694,6 @@ export function useTTS() {
     ttsState, sentences, sentenceIdx,
     play, pause, resume, stop, playFrom, seekToPhrase, playFromSelection,
     refreshSentences, setOnPageEnd, isPlayingRef,
-    disableAutoScroll,
+    disableAutoScroll, getActiveSentenceIdx, highlightSentence, clearHighlight
   };
 }

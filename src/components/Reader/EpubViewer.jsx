@@ -1,351 +1,259 @@
 // src/components/Reader/EpubViewer.jsx
-// Lecteur EPUB avec défilement continu (vertical pur)
+// Lecteur EPUB avec défilement continu (vertical pur).
+//
+// Ce composant est volontairement court (~250 lignes).
+// Toute la logique métier est déléguée à des hooks spécialisés :
+//   - useEpubContent   : chargement et parsing du fichier EPUB
+//   - useTTS           : synthèse vocale et suivi des phrases
+//   - useViewerLayout  : ResizeObserver, fontSize, couleurs CSS
+//   - useChapterTransition : transitions de chapitres, signets, seek
+//   - useAutoScroll    : défilement automatique (avec gestion chapitres courts)
 
 import { useEffect, useRef, useCallback, useState, memo } from 'react';
-import { useEpubContent } from '../../hooks/useEpubContent';
-import { useTTS } from '../../hooks/useTTS';
-import { useReaderStore } from '../../store/readerStore';
-import AudioControls from './AudioControls';
-import DisplaySettings from './DisplaySettings';
-import NavigationBar from './NavigationBar';
-import TocPanel from './TocPanel';
+import { useEpubContent }        from '../../hooks/useEpubContent';
+import { useTTS }                from '../../hooks/useTTS';
+import { useReaderStore }        from '../../store/readerStore';
+import { useViewerLayout }       from '../../hooks/useViewerLayout';
+import { useChapterTransition }  from '../../hooks/useChapterTransition';
+import { useAutoScroll }         from '../../hooks/useAutoScroll';
+import {
+  pendingSeekFractionRef,
+  pendingSeekSentenceIdxRef,
+  sharedCurrentFractionRef,
+} from '../../hooks/readerSharedRefs';
+import AudioControls    from './AudioControls';
+import DisplaySettings  from './DisplaySettings';
+import NavigationBar    from './NavigationBar';
+import TocPanel         from './TocPanel';
 
-// ── Conteneur HTML Isolé (évite les re-renders et la perte des <mark>) ────
-// Enveloppé dans React.memo pour ne se re-rendre QUE si le HTML ou la taille de police changent.
+// ── Conteneur HTML isolé ──────────────────────────────────────────────────────
+// Enveloppé dans React.memo pour ne se re-rendre QUE si le HTML ou l'audioMode changent.
 // Empêche isPlaying ou sentenceIdx de déclencher un redessin destructeur.
-const EpubHtmlContent = memo(({ currentHtml, setContentRefCallback, onScroll, onWheel, disableAutoScroll, handleNextChapterManual, handlePrevChapterManual, onDoubleClick, onContextMenu }) => {
-  return (
-    <div
-      ref={setContentRefCallback}
-      tabIndex="-1"
-      onScroll={onScroll}
-      onWheel={onWheel}
-      onTouchMove={disableAutoScroll}
-      onMouseDown={disableAutoScroll}
-      onDoubleClick={onDoubleClick}
-      onContextMenu={onContextMenu}
-      onKeyDown={(e) => {
-        if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Space'].includes(e.code)) {
-          disableAutoScroll();
-        }
-        if (e.key === 'ArrowRight') handleNextChapterManual();
-        if (e.key === 'ArrowLeft') handlePrevChapterManual();
-      }}
-      className="reader-content focus:outline-none"
-      dangerouslySetInnerHTML={{ __html: currentHtml }}
-    />
-  );
-});
+const EpubHtmlContent = memo(({
+  currentHtml, setContentRefCallback, onScroll, onWheel,
+  disableAutoScroll, handleNextChapterManual, handlePrevChapterManual,
+  onDoubleClick, onContextMenu, audioMode, onClick,
+}) => (
+  <div
+    ref={setContentRefCallback}
+    tabIndex="-1"
+    onScroll={onScroll}
+    onWheel={onWheel}
+    onTouchMove={disableAutoScroll}
+    onMouseDown={disableAutoScroll}
+    onDoubleClick={onDoubleClick}
+    onContextMenu={onContextMenu}
+    onClick={onClick}
+    onKeyDown={(e) => {
+      if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Space'].includes(e.code)) {
+        disableAutoScroll();
+      }
+      if (e.key === 'ArrowRight') handleNextChapterManual();
+      if (e.key === 'ArrowLeft')  handlePrevChapterManual();
+    }}
+    className={`reader-content focus:outline-none ${audioMode ? 'audio-mode-padding' : 'clean-mode-padding'}`}
+    dangerouslySetInnerHTML={{ __html: currentHtml }}
+  />
+));
 
+// ── Composant principal ───────────────────────────────────────────────────────
 export default function EpubViewer({ book }) {
-  const contentRef    = useRef(null);
+  const contentRef = useRef(null);
+
+  // ── UI : barre de nav, paramètres, TOC ────────────────────────────────────
   const [showSettings, setShowSettings] = useState(false);
   const [showToc,      setShowToc]      = useState(false);
   const [showUi,       setShowUi]       = useState(true);
-  
-  const pendingSeekFractionRef = useRef(null);
-  const pendingSeekSentenceIdxRef = useRef(null);
-  const wasPlayingRef = useRef(false);
   const uiTimeoutRef = useRef(null);
 
   const resetUiTimeout = useCallback(() => {
     setShowUi(true);
     if (uiTimeoutRef.current) clearTimeout(uiTimeoutRef.current);
+    const delay = (showSettings || showToc) ? 5000 : 4000;
     uiTimeoutRef.current = setTimeout(() => {
       setShowUi(false);
-    }, 4000);
-  }, []);
+      setShowSettings(false);
+      setShowToc(false);
+    }, delay);
+  }, [showSettings, showToc]);
 
+  useEffect(() => () => { if (uiTimeoutRef.current) clearTimeout(uiTimeoutRef.current); }, []);
+  useEffect(() => { resetUiTimeout(); }, [showToc, showSettings, resetUiTimeout]);
+
+  // Fermeture des paramètres au clic extérieur
   useEffect(() => {
-    return () => { if (uiTimeoutRef.current) clearTimeout(uiTimeoutRef.current); };
-  }, []);
+    if (!showSettings) return;
+    const handleOutside = (e) => {
+      const panel = document.querySelector('.settings-panel');
+      const btn   = document.getElementById('settings-btn');
+      if (panel && !panel.contains(e.target) && btn && !btn.contains(e.target)) {
+        setShowSettings(false);
+      }
+    };
+    document.addEventListener('click',      handleOutside);
+    document.addEventListener('touchstart', handleOutside);
+    return () => {
+      document.removeEventListener('click',      handleOutside);
+      document.removeEventListener('touchstart', handleOutside);
+    };
+  }, [showSettings]);
 
-  useEffect(() => {
-    if (showToc || showSettings) {
-      if (uiTimeoutRef.current) clearTimeout(uiTimeoutRef.current);
-      setShowUi(true);
-    } else {
-      resetUiTimeout();
-    }
-  }, [showToc, showSettings, resetUiTimeout]);
-
+  // ── Store ──────────────────────────────────────────────────────────────────
   const {
     epubReady, currentChapter, ttsState, preferences,
-    setContentEl, getSavedProgress,
+    setContentEl, getSavedProgress, showToast,
   } = useReaderStore();
 
+  // ── Chargement du contenu EPUB ─────────────────────────────────────────────
   const {
     isLoading, currentHtml, localChapterIdx, totalChapters, chapterWeights, bookMeta,
     chaptersRef, loadChapter, initBook, goNextChapter, goPrevChapter, error, setError,
   } = useEpubContent();
 
+  // ── Synthèse vocale ────────────────────────────────────────────────────────
   const {
     play, pause, resume, stop, playFrom, seekToPhrase, playFromSelection,
     setOnPageEnd, refreshSentences,
     sentences, sentenceIdx, isPlayingRef,
-    disableAutoScroll,
+    disableAutoScroll, getActiveSentenceIdx, highlightSentence,
   } = useTTS();
 
-  const handleContextMenu = useCallback((e) => {
-    const sel = window.getSelection();
-    if (sel && sel.toString().trim().length > 0) {
-      e.preventDefault();
-      playFromSelection();
-    }
-  }, [playFromSelection]);
+  // Arrêter le TTS si l'utilisateur désactive le mode audio
+  useEffect(() => {
+    if (!preferences.audioMode) stop();
+  }, [preferences.audioMode, stop]);
 
+  // ── Double ref : contentRef local + store ─────────────────────────────────
   const setContentRefCallback = useCallback((el) => {
     contentRef.current = el;
     setContentEl(el);
   }, [setContentEl]);
 
-  const currentFractionRef = useRef(0);
+  // ── Layout (resize, fontSize, couleurs) ────────────────────────────────────
+  // sharedCurrentFractionRef est le singleton de module partagé avec useChapterTransition.
+  useViewerLayout({ contentRef, currentFractionRef: sharedCurrentFractionRef, currentHtml });
 
-  // ── Redimensionnement (Orientation / Mode paysage) ────────────────────
-  useEffect(() => {
-    if (!contentRef.current) return;
-    const container = contentRef.current;
+  // Ref partagé entre useChapterTransition et useAutoScroll.
+  // Permet à handleScroll de savoir si l'auto-scroll est actif (et de ne pas
+  // déclencher checkScrollTransition dans ce cas).
+  const isAutoScrollingRef = useRef(false);
 
-    const resizeObserver = new ResizeObserver(() => {
-      const mark = container.querySelector('mark.tts-highlight');
-      if (mark) {
-         const targetScroll = Math.max(0, mark.offsetTop - container.clientHeight / 2);
-         container.scrollTop = targetScroll;
-      } else {
-         const newHeight = Math.max(1, container.scrollHeight - container.clientHeight);
-         container.scrollTop = currentFractionRef.current * newHeight;
-      }
-    });
+  // ── Transitions de chapitres ───────────────────────────────────────────────
+  const {
+    isTransitioningRef,
+    saveProgressTimeoutRef,
+    handleScroll: _handleScroll,
+    handleWheel:  _handleWheel,
+    handleNextChapterManual,
+    handlePrevChapterManual,
+    handleGlobalSeek,
+    handleBookmarkSeek,
+    handleSaveBookmark,
+  } = useChapterTransition({
+    contentRef,
+    epubContent: {
+      currentHtml, localChapterIdx, totalChapters, chapterWeights,
+      loadChapter, goNextChapter, goPrevChapter,
+    },
+    tts: {
+      play, pause, stop, playFrom, seekToPhrase,
+      setOnPageEnd, refreshSentences,
+      sentences, sentenceIdx, isPlayingRef,
+      getActiveSentenceIdx, highlightSentence,
+      disableAutoScroll,
+    },
+    book,
+    showToast,
+    isAutoScrollingRef,
+  });
 
-    resizeObserver.observe(container);
-    return () => resizeObserver.disconnect();
-  }, []);
+  // Adapter handleWheel pour passer resetUiTimeout
+  const handleWheel = useCallback((e) => {
+    _handleWheel(e, resetUiTimeout);
+  }, [_handleWheel, resetUiTimeout]);
 
-  // ── Initialisation du livre ────────────────────────────────────────────
+  // ── Auto-scroll ───────────────────────────────────────────────────────────
+  const {
+    isAutoScrolling,
+    toggleAutoScroll,
+    handleUserInteraction,
+  } = useAutoScroll({
+    contentRef,
+    handleNextChapterManual,
+    disableAutoScroll,
+    sentenceCount: sentences.length,
+    showToast,
+    isTransitioningRef,
+    isAutoScrollingRef,
+  });
+
+  // Wrapper handleScroll : réinitialise le timer UI + délègue
+  // ⚠️ Ne pas appeler resetUiTimeout pendant l'auto-scroll :
+  // la boucle RAF génère ~60 scroll events/sec, ce qui garderait l'UI (bouton pause)
+  // toujours visible. On ne reset le timer que pour les scrolls initiés par l'utilisateur.
+  const handleScroll = useCallback((e) => {
+    if (!isAutoScrollingRef.current) resetUiTimeout();
+    _handleScroll(e);
+  }, [resetUiTimeout, _handleScroll, isAutoScrollingRef]);
+
+  // ── Initialisation du livre ────────────────────────────────────────────────
   useEffect(() => {
     if (!book?.file) return;
-    const { idx: savedIdx, fraction: savedFraction } = getSavedProgress();
+    const { idx: savedIdx, fraction: savedFraction, sentenceIdx: savedSentenceIdx } = getSavedProgress();
     initBook(book.file, savedIdx).then((meta) => {
       if (meta) {
-        if (savedFraction > 0) pendingSeekFractionRef.current = savedFraction;
+        // Écrire dans les refs de module : elles seront lues par useChapterTransition
+        // dès que le premier HTML de chapitre arrivera
+        if (savedSentenceIdx > 0) pendingSeekSentenceIdxRef.current = savedSentenceIdx;
+        if (savedFraction   > 0) pendingSeekFractionRef.current    = savedFraction;
         setTimeout(() => refreshSentences(false), 400);
       }
     });
     return () => stop();
-  }, [book]);
+  }, [book]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Quand le chapitre change (nouveau HTML) ────────────────────────────
-  useEffect(() => {
-    if (!currentHtml || !contentRef.current) return;
-    contentRef.current.scrollTop = 0;
-    setTimeout(() => {
-      const isSeekingFrac = pendingSeekFractionRef.current !== null;
-      const isSeekingIdx = pendingSeekSentenceIdxRef.current !== null;
-      const isSeeking = isSeekingFrac || isSeekingIdx;
-      const willAutoPlay = !isSeeking && isPlayingRef.current;
-      
-      const freshSentences = refreshSentences(willAutoPlay);
-
-      if (isSeeking && freshSentences?.length > 0) {
-        let targetSentenceIdx = 0;
-        
-        if (isSeekingFrac) {
-            const targetFrac = pendingSeekFractionRef.current;
-            pendingSeekFractionRef.current = null;
-            targetSentenceIdx = Math.floor(targetFrac * freshSentences.length);
-        } else if (isSeekingIdx) {
-            targetSentenceIdx = pendingSeekSentenceIdxRef.current;
-            pendingSeekSentenceIdxRef.current = null;
-        }
-        
-        const clampedIdx = Math.max(0, Math.min(targetSentenceIdx, freshSentences.length - 1));
-        
-        setTimeout(() => {
-            if (wasPlayingRef.current) {
-                wasPlayingRef.current = false;
-                playFrom(clampedIdx);
-            } else {
-                seekToPhrase(clampedIdx);
-            }
-        }, 50);
-      }
-    }, 300);
-  }, [currentHtml, refreshSentences, playFrom, seekToPhrase]);
-
-  // ── Mise à l'échelle CSS ─────────────────────────────────────────────
-  useEffect(() => {
-    if (contentRef.current) {
-      const container = contentRef.current;
-      const oldScroll = container.scrollTop;
-      const oldHeight = Math.max(1, container.scrollHeight - container.clientHeight);
-      const fraction = oldScroll / oldHeight;
-
-      container.style.fontSize = `${preferences.fontSize}px`;
-
-      setTimeout(() => {
-         const mark = container.querySelector('mark.tts-highlight');
-         if (mark) {
-             const targetScroll = Math.max(0, mark.offsetTop - container.clientHeight / 2);
-             container.scrollTop = targetScroll;
-         } else {
-             const newHeight = Math.max(1, container.scrollHeight - container.clientHeight);
-             container.scrollTop = fraction * newHeight;
-         }
-      }, 50);
+  // ── Gestionnaires divers ───────────────────────────────────────────────────
+  const handleContextMenu = useCallback((e) => {
+    const sel = window.getSelection();
+    if (sel?.toString().trim().length > 0) {
+      e.preventDefault();
+      playFromSelection();
     }
-  }, [preferences.fontSize]);
+  }, [playFromSelection]);
 
-  useEffect(() => {
-    document.documentElement.style.setProperty('--highlight-color', preferences.highlightColor);
-  }, [preferences.highlightColor]);
-
-  // ── Recherche Globale depuis la Timeline ────────────────────────────────
-  const handleGlobalSeek = useCallback(async (percentage) => {
-    const targetOffset = percentage / 100;
-    let targetChapterIdx = 0;
-    let targetFraction = 0;
-    
-    if (chapterWeights && chapterWeights.offsets.length > 0) {
-      for (let i = 0; i < chapterWeights.offsets.length; i++) {
-        const offset = chapterWeights.offsets[i];
-        const weight = chapterWeights.weights[i] || 0;
-        if (targetOffset >= offset && targetOffset <= offset + weight) {
-          targetChapterIdx = i;
-          targetFraction = weight > 0 ? (targetOffset - offset) / weight : 0;
-          break;
-        }
-      }
-    } else {
-      if (totalChapters > 0) {
-        targetChapterIdx = Math.floor(targetOffset * totalChapters);
-        if (targetChapterIdx >= totalChapters) targetChapterIdx = totalChapters - 1;
-        targetFraction = (targetOffset * totalChapters) - targetChapterIdx;
-      }
-    }
-
-    wasPlayingRef.current = isPlayingRef.current;
-    stop();
-
-    if (targetChapterIdx !== localChapterIdx) {
-      pendingSeekFractionRef.current = targetFraction;
-      await loadChapter(targetChapterIdx);
-    } else {
-      const targetSentenceIdx = Math.floor(targetFraction * sentences.length);
-      const clampedIdx = Math.max(0, Math.min(targetSentenceIdx, sentences.length - 1));
-      if (wasPlayingRef.current) {
-          wasPlayingRef.current = false;
-          playFrom(clampedIdx);
-      } else {
-          seekToPhrase(clampedIdx);
-      }
-    }
-  }, [chapterWeights, totalChapters, localChapterIdx, isPlayingRef, stop, loadChapter, sentences.length, playFrom, seekToPhrase]);
-
-  // ── Recherche vers un signet ───────────────────────────────────────────
-  const handleBookmarkSeek = useCallback(async (bookmark) => {
-    if (!bookmark) return;
-    
-    wasPlayingRef.current = isPlayingRef.current;
-    stop();
-
-    if (bookmark.chapterIdx !== localChapterIdx) {
-      pendingSeekSentenceIdxRef.current = bookmark.sentenceIdx || 0;
-      await loadChapter(bookmark.chapterIdx);
-    } else {
-      const clampedIdx = Math.max(0, Math.min(bookmark.sentenceIdx || 0, sentences.length - 1));
-      if (wasPlayingRef.current) {
-          wasPlayingRef.current = false;
-          playFrom(clampedIdx);
-      } else {
-          seekToPhrase(clampedIdx);
-      }
-    }
-  }, [localChapterIdx, isPlayingRef, stop, loadChapter, sentences.length, playFrom, seekToPhrase]);
-
-  // ── Auto-chargement du chapitre suivant ────────────────────────────────
-  const onChapterEnd = useCallback(async () => {
-    const ok = await goNextChapter();
-    if (!ok) stop(); // Fin du livre
-    else setTimeout(() => refreshSentences(true), 400); // true = autoPlay
-  }, [goNextChapter, stop, refreshSentences]);
-
-  useEffect(() => {
-    setOnPageEnd(onChapterEnd);
-  }, [setOnPageEnd, onChapterEnd]);
-
-  const handleNextChapterManual = useCallback(async (e) => {
-    if (e) e.stopPropagation();
-    stop();
-    await goNextChapter();
-  }, [goNextChapter, stop]);
-
-  const handlePrevChapterManual = useCallback(async (e) => {
-    if (e) e.stopPropagation();
-    stop();
-    await goPrevChapter();
-  }, [goPrevChapter, stop]);
-
-  // Détection du scroll manuel (si l'utilisateur lit sans le TTS)
-  // Permet de passer de chapitre en chapitre juste en scrollant !
-  const isTransitioningRef = useRef(false);
-
-  const checkScrollTransition = useCallback(async (direction, el) => {
-    if (isTransitioningRef.current || isPlayingRef.current) return;
-
-    if (direction === 'down' && el.scrollHeight - el.scrollTop - el.clientHeight < 10) {
-      isTransitioningRef.current = true;
-      await handleNextChapterManual();
-      setTimeout(() => { isTransitioningRef.current = false; }, 800);
-    } else if (direction === 'up' && el.scrollTop <= 0) {
-      isTransitioningRef.current = true;
-      await handlePrevChapterManual();
-      setTimeout(() => { isTransitioningRef.current = false; }, 800);
-    }
-  }, [handleNextChapterManual, handlePrevChapterManual, isPlayingRef]);
-
-  const saveProgressTimeoutRef = useRef(null);
-
-  const handleScroll = useCallback((e) => {
-    // Le onScroll natif détecte surtout le scroll vers le bas car on force le scrollTop au chapitre précédent.
-    checkScrollTransition('down', e.target);
-    if (e.target.scrollTop === 0) checkScrollTransition('up', e.target);
-    
-    // Sauvegarder la position exacte pour reprendre au même endroit
-    if (saveProgressTimeoutRef.current) clearTimeout(saveProgressTimeoutRef.current);
-    saveProgressTimeoutRef.current = setTimeout(() => {
-       const el = e.target;
-       const newHeight = Math.max(1, el.scrollHeight - el.clientHeight);
-       const fraction = el.scrollTop / newHeight;
-       currentFractionRef.current = fraction;
-       useReaderStore.getState().saveCurrentPosition(fraction);
-    }, 500);
-  }, [checkScrollTransition]);
-
-  const handleWheel = useCallback((e) => {
-    resetUiTimeout();
-    disableAutoScroll();
-    if (!contentRef.current) return;
-    // Si la page est trop courte pour scroller, ou qu'on force la molette aux extrémités:
-    if (e.deltaY > 0) checkScrollTransition('down', contentRef.current);
-    else if (e.deltaY < 0) checkScrollTransition('up', contentRef.current);
-  }, [disableAutoScroll, checkScrollTransition, resetUiTimeout]);
+  const handleContentClick = useCallback(() => {
+    if (showSettings) setShowSettings(false);
+    if (showToc)      setShowToc(false);
+  }, [showSettings, showToc]);
 
   const handlePlayPause = () => {
-    if (ttsState === 'idle')         play(sentenceIdx);
-    else if (ttsState === 'playing') pause();
-    else if (ttsState === 'paused')  resume();
+    if (ttsState === 'idle') {
+      let targetIdx = sentenceIdx;
+      const container = contentRef.current;
+      if (container && sentences?.length > 0) {
+        const maxScroll = Math.max(1, container.scrollHeight - container.clientHeight);
+        const fraction  = container.scrollTop / maxScroll;
+        targetIdx = Math.max(0, Math.min(Math.floor(fraction * sentences.length), sentences.length - 1));
+      }
+      play(targetIdx);
+    } else if (ttsState === 'playing') {
+      pause();
+    } else if (ttsState === 'paused') {
+      resume();
+    }
   };
 
+  // ── Rendu ──────────────────────────────────────────────────────────────────
   return (
-    <div 
-      className="reader-shell relative"
+    <div
+      className={`reader-shell relative theme-${preferences.theme || 'dark'}`}
       onClick={resetUiTimeout}
       onTouchStart={resetUiTimeout}
       onMouseMove={resetUiTimeout}
     >
-
+      {/* Écran d'erreur */}
       {error && (
-        <div className="absolute inset-0 bg-[#070b12]/95 flex flex-col items-center justify-center p-6 text-center z-[100]" style={{ zIndex: 100 }}>
+        <div className="absolute inset-0 bg-[#070b12]/95 flex flex-col items-center justify-center p-6 text-center z-[100]">
           <div className="text-5xl mb-4">⚠️</div>
           <h3 className="text-xl font-bold text-white mb-2">Erreur de chargement</h3>
           <p className="text-sm text-[#8b949e] max-w-lg mb-6 whitespace-pre-wrap font-mono bg-black/40 p-4 rounded-lg border border-white/10 text-left overflow-auto max-h-60">
@@ -375,7 +283,8 @@ export default function EpubViewer({ book }) {
         </div>
       )}
 
-      <div className={`absolute top-0 left-0 right-0 z-40 transition-opacity duration-500 ease-in-out ${showUi || showSettings || showToc ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+      {/* Barre de navigation supérieure */}
+      <div className={`absolute top-0 left-0 right-0 z-40 transition-all duration-500 ease-in-out ${showUi || showSettings || showToc ? 'opacity-100' : 'opacity-0 pointer-events-none invisible'}`}>
         <NavigationBar
           title={bookMeta?.title || book?.title || 'Chargement…'}
           chapter={currentChapter}
@@ -389,26 +298,35 @@ export default function EpubViewer({ book }) {
             if (showSettings) setShowSettings(false);
           }}
           showToc={showToc}
+          onSaveBookmark={() => handleSaveBookmark(book)}
         />
       </div>
 
-      <div className={`absolute top-[60px] right-0 z-40 settings-panel ${showSettings ? 'open' : ''}`}>
+      {/* Panneau paramètres */}
+      <div
+        className={`absolute top-[60px] right-0 z-40 settings-panel ${showSettings ? 'open' : ''}`}
+        onClick={(e) => { e.stopPropagation(); resetUiTimeout(); }}
+      >
         <DisplaySettings />
       </div>
 
-      {/* Panneau latéral TOC */}
-      <div 
-        className={`fixed inset-0 z-50 bg-black/60 backdrop-blur-sm transition-opacity duration-300 ${showToc ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`}
+      {/* Panneau TOC */}
+      <div
+        className={`fixed inset-0 z-50 bg-black/60 backdrop-blur-sm transition-all duration-300 ${showToc ? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none invisible'}`}
         onClick={() => setShowToc(false)}
+        onTouchStart={() => setShowToc(false)}
       >
-        <div 
+        <div
           className={`absolute top-0 right-0 w-80 max-w-[85vw] h-full shadow-2xl transition-transform duration-300 ease-out ${showToc ? 'translate-x-0' : 'translate-x-full'}`}
           onClick={e => e.stopPropagation()}
+          onTouchStart={e => e.stopPropagation()}
         >
-          <TocPanel 
+          <TocPanel
             chapters={chaptersRef?.current || []}
             currentIdx={localChapterIdx}
             onSelectChapter={(idx) => {
+              isTransitioningRef.current = true;
+              if (saveProgressTimeoutRef.current) clearTimeout(saveProgressTimeoutRef.current);
               loadChapter(idx);
             }}
             onSelectBookmark={handleBookmarkSeek}
@@ -417,12 +335,20 @@ export default function EpubViewer({ book }) {
         </div>
       </div>
 
+      {/* Zone de lecture */}
       <div className="reading-area px-0 sm:px-4">
-
-        <div className="book-stage">
+        <div
+          className="book-stage"
+          onClick={() => {
+            if (showSettings || showToc) {
+              setShowSettings(false);
+              setShowToc(false);
+            }
+          }}
+        >
           {(!epubReady || isLoading) && (
             <div className="loading-overlay z-10">
-              <div className="spinner-ring"/>
+              <div className="spinner-ring" />
               <span className="loading-emoji">📖</span>
               <p className="loading-text">Chargement du chapitre…</p>
             </div>
@@ -433,38 +359,59 @@ export default function EpubViewer({ book }) {
             setContentRefCallback={setContentRefCallback}
             onScroll={handleScroll}
             onWheel={handleWheel}
-            disableAutoScroll={disableAutoScroll}
+            disableAutoScroll={handleUserInteraction}
             handleNextChapterManual={handleNextChapterManual}
             handlePrevChapterManual={handlePrevChapterManual}
             onDoubleClick={playFromSelection}
             onContextMenu={handleContextMenu}
+            audioMode={preferences.audioMode}
+            onClick={handleContentClick}
           />
         </div>
-
       </div>
 
-      <div className={`absolute bottom-0 left-0 right-0 z-40 transition-opacity duration-500 ease-in-out ${showUi || showSettings || showToc ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
-        <AudioControls
-          ttsState={ttsState}
-          onPlayPause={handlePlayPause}
-          onStop={stop}
-          onSeek={(idx) => {
-            if (isPlayingRef.current) {
-               playFrom(idx);
-            } else {
-               seekToPhrase(idx);
-            }
-          }}
-          onGlobalSeek={handleGlobalSeek}
-          sentenceCount={sentences.length}
-          sentenceIdx={sentenceIdx}
-          localChapterIdx={localChapterIdx}
-          totalChapters={totalChapters}
-          chapterWeights={chapterWeights}
-          cfi={`ch${localChapterIdx + 1}/${totalChapters}`}
-        />
-      </div>
+      {/* Contrôles audio (mode TTS uniquement) */}
+      {preferences.audioMode && (
+        <div className={`absolute bottom-0 left-0 right-0 z-40 transition-all duration-500 ease-in-out ${showUi || showSettings || showToc ? 'opacity-100' : 'opacity-0 pointer-events-none invisible'}`}>
+          <AudioControls
+            ttsState={ttsState}
+            onPlayPause={handlePlayPause}
+            onStop={stop}
+            onSeek={(idx) => {
+              if (isPlayingRef.current) playFrom(idx);
+              else seekToPhrase(idx);
+            }}
+            onGlobalSeek={handleGlobalSeek}
+            sentenceCount={sentences.length}
+            sentenceIdx={sentenceIdx}
+            localChapterIdx={localChapterIdx}
+            totalChapters={totalChapters}
+            chapterWeights={chapterWeights}
+            cfi={`ch${localChapterIdx + 1}/${totalChapters}`}
+          />
+        </div>
+      )}
 
+      {/* Bouton FAB auto-scroll (lecture normale uniquement) */}
+      {preferences.autoScrollEnabled && !preferences.audioMode && (
+        <button
+          onClick={toggleAutoScroll}
+          className={`autoscroll-fab ${isAutoScrolling ? 'active' : ''} ${showUi || showSettings || showToc ? 'opacity-100' : 'opacity-0 pointer-events-none invisible'}`}
+          title={isAutoScrolling ? 'Suspendre le défilement auto' : 'Lancer le défilement auto'}
+          aria-label="Défilement automatique"
+        >
+          {isAutoScrolling ? (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+              <rect x="6" y="4" width="4" height="16" rx="1" />
+              <rect x="14" y="4" width="4" height="16" rx="1" />
+            </svg>
+          ) : (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" className="ml-1">
+              <polygon points="5,3 19,12 5,21" />
+            </svg>
+          )}
+        </button>
+      )}
     </div>
   );
 }

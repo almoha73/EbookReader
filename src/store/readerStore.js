@@ -11,6 +11,9 @@ const DEFAULT_PREFS = {
   ttsRate: 1.0,
   voice: null,
   theme: 'dark',
+  audioMode: true,
+  autoScrollEnabled: false,
+  autoScrollSpeed: 30,
 };
 
 // ── Chargement initial de la bibliothèque depuis localStorage ──────────────
@@ -94,21 +97,22 @@ export const useReaderStore = create((set, get) => ({
   setEpubReady: (ready) => set({ epubReady: ready }),
   setContentEl: (el) => set({ contentEl: el }),
 
-  saveCurrentPosition: (fraction) => {
+  saveCurrentPosition: (fraction, sentenceIdx = 0) => {
     const { currentBook, currentChapterIdx } = get();
     if (currentBook?.id) {
-       saveProgress(currentBook.id, JSON.stringify({ idx: currentChapterIdx, fraction }));
+       saveProgress(currentBook.id, JSON.stringify({ idx: currentChapterIdx, fraction, sentenceIdx }));
     }
   },
 
   getSavedProgress: () => {
     const { currentBook } = get();
-    if (!currentBook?.id) return { idx: 0, fraction: 0 };
+    if (!currentBook?.id) return { idx: 0, fraction: 0, sentenceIdx: 0 };
     const saved = loadProgress(currentBook.id);
-    if (!saved) return { idx: 0, fraction: 0 };
+    if (!saved) return { idx: 0, fraction: 0, sentenceIdx: 0 };
     try {
         if (typeof saved === 'string' && saved.startsWith('{')) {
-            return JSON.parse(saved);
+            const parsed = JSON.parse(saved);
+            return { idx: parsed.idx || 0, fraction: parsed.fraction || 0, sentenceIdx: parsed.sentenceIdx || 0 };
         } else if (typeof saved === 'string' && saved.startsWith('ch')) {
             return { idx: parseInt(saved.replace('ch', ''), 10) || 0, fraction: 0 };
         }

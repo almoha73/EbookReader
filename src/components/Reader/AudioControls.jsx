@@ -6,7 +6,7 @@ import { useReaderStore } from '../../store/readerStore';
 import { TextToSpeech } from '@capacitor-community/text-to-speech';
 
 export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, onGlobalSeek, sentenceCount, sentenceIdx, localChapterIdx, totalChapters, chapterWeights, cfi }) {
-  const { preferences, setPreference, showToast, currentBook, addBookmark } = useReaderStore();
+  const { preferences, setPreference, currentBook } = useReaderStore();
   const [voices, setVoices] = useState([]);
   const [showVoices, setShowVoices] = useState(false);
   const [dragProgress, setDragProgress] = useState(null);
@@ -71,36 +71,7 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
   const showTotalProgress = totalChapters > 0;
   const displayProgress = dragProgress !== null ? dragProgress : totalProgress;
 
-  const handleSaveBookmark = () => {
-    if (cfi && currentBook) {
-      let targetIdx = sentenceIdx;
-      let fraction = 0;
 
-      const container = document.querySelector('.reader-content');
-      if (container) {
-          const maxScroll = Math.max(1, container.scrollHeight - container.clientHeight);
-          fraction = maxScroll > 0 ? container.scrollTop / maxScroll : 0;
-          
-          if (ttsState !== 'playing' && sentenceCount > 0) {
-              targetIdx = Math.floor(fraction * sentenceCount);
-              // S'assurer qu'on ne dépasse pas les bornes
-              targetIdx = Math.max(0, Math.min(targetIdx, sentenceCount - 1));
-          }
-      }
-
-      addBookmark({
-        id: Date.now(),
-        chapterIdx: localChapterIdx,
-        progress: totalProgress,
-        sentenceIdx: targetIdx,
-        chapterFraction: fraction,
-        timestamp: Date.now()
-      });
-      showToast(`🔖 Signet sauvegardé (${totalProgress.toFixed(1)}%)`);
-    } else {
-      showToast('⚠️ Impossible de sauvegarder le signet');
-    }
-  };
 
   return (
     <div 
@@ -278,22 +249,32 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
             className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 rounded-md transition-colors"
             aria-label="Réduire la vitesse"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
+            -
           </button>
-          <span className="text-xs font-mono text-white/90 w-8 text-center select-none">
-            {preferences.ttsRate.toFixed(1)}x
-          </span>
+          
+          <div className="relative w-16 mx-1">
+            <input
+              type="number"
+              min="0.5"
+              max="2.0"
+              step="0.1"
+              value={preferences.ttsRate}
+              onChange={(e) => {
+                const val = parseFloat(e.target.value);
+                if (!isNaN(val)) {
+                   setPreference('ttsRate', Math.max(0.5, Math.min(2.0, Number(val.toFixed(1)))));
+                }
+              }}
+              className="w-full bg-black/30 border border-white/10 rounded px-1 py-1 text-center text-sm text-white focus:outline-none focus:border-blue-500 font-mono"
+            />
+          </div>
+
           <button
-            onClick={() => setPreference('ttsRate', Math.min(2.5, Number((preferences.ttsRate + 0.1).toFixed(1))))}
+            onClick={() => setPreference('ttsRate', Math.min(2.0, Number((preferences.ttsRate + 0.1).toFixed(1))))}
             className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 rounded-md transition-colors"
             aria-label="Augmenter la vitesse"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
+            +
           </button>
         </div>
 
@@ -348,19 +329,6 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
             </div>
           )}
         </div>
-
-        {/* Bouton sauvegarder marque-page */}
-        <button
-          onClick={handleSaveBookmark}
-          className="btn-icon"
-          title="Sauvegarder la position (CFI)"
-          aria-label="Sauvegarder"
-          id="save-bookmark-btn"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
-          </svg>
-        </button>
 
       </div>
     </div>
