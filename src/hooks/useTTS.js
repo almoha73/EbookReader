@@ -277,8 +277,11 @@ export function useTTS() {
           // Fallback if markers aren't injected yet
           return Math.floor((targetY / Math.max(1, container.scrollHeight)) * sents.length);
        }
-       // On calcule le Y absolu dans le conteneur
-       let y = el.offsetTop; 
+       // On calcule le Y absolu dans le conteneur de manière sécurisée
+       const rect = el.getBoundingClientRect();
+       const containerRect = container.getBoundingClientRect();
+       let y = rect.top - containerRect.top + container.scrollTop;
+       
        if (y <= targetY) {
           best = mid;
           low = mid + 1;
@@ -544,7 +547,7 @@ export function useTTS() {
 
        const container = useReaderStore.getState().contentEl;
        if (container) {
-           const targetScroll = Math.max(0, currentSentenceYRef.current - container.clientHeight / 2);
+           const targetScroll = Math.max(0, currentSentenceYRef.current - container.clientHeight / 3);
            isProgrammaticScrollRef.current = true;
            container.scrollTop = targetScroll;
            isProgrammaticScrollRef.current = false;

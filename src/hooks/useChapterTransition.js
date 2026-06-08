@@ -140,15 +140,17 @@ export function useChapterTransition({ contentRef, epubContent, tts, book, showT
 
       if (isSeeking && freshSentences?.length > 0) {
         let targetIdx = 0;
+        let fracToRestore = 0;
 
         if (pendingSeekSentenceIdxRef.current !== null) {
           targetIdx = pendingSeekSentenceIdxRef.current;
+          fracToRestore = pendingSeekFractionRef.current || 0;
           pendingSeekSentenceIdxRef.current = null;
           pendingSeekFractionRef.current    = null;
         } else {
-          const frac = pendingSeekFractionRef.current;
+          fracToRestore = pendingSeekFractionRef.current || 0;
           pendingSeekFractionRef.current = null;
-          targetIdx = Math.floor(frac * freshSentences.length);
+          targetIdx = Math.floor(fracToRestore * freshSentences.length);
         }
 
         const clamped = Math.max(0, Math.min(targetIdx, freshSentences.length - 1));
@@ -159,7 +161,11 @@ export function useChapterTransition({ contentRef, epubContent, tts, book, showT
             wasPlayingRef.current = false;
             playFrom(clamped);
           } else {
-            seekToPhrase(clamped);
+            highlightSentence(clamped, true);
+            if (container) {
+               const maxScroll = Math.max(1, container.scrollHeight - container.clientHeight);
+               container.scrollTop = fracToRestore * maxScroll;
+            }
           }
           setTimeout(() => { isTransitioningRef.current = false; }, 500);
         }, 50);
@@ -381,7 +387,12 @@ export function useChapterTransition({ contentRef, epubContent, tts, book, showT
         wasPlayingRef.current = false;
         playFrom(clamped);
       } else {
-        seekToPhrase(clamped);
+        highlightSentence(clamped, true);
+        const container = contentRef.current || document.querySelector('.reader-content');
+        if (container) {
+           const maxScroll = Math.max(1, container.scrollHeight - container.clientHeight);
+           container.scrollTop = (bookmark.chapterFraction || 0) * maxScroll;
+        }
       }
       setTimeout(() => { isTransitioningRef.current = false; }, 500);
     }

@@ -73,6 +73,22 @@ export default function DisplaySettings({ onFontSizeChange, onHighlightColorChan
         {/* Divider */}
         <div className="hidden sm:block w-px h-8 bg-white/10" />
 
+        {/* Gras */}
+        <div className="flex items-center">
+          <button
+            onClick={() => setPreference('boldText', !preferences.boldText)}
+            className={`btn-icon w-8 h-8 text-lg font-serif transition-colors ${preferences.boldText ? 'text-blue-400 font-bold bg-white/5 rounded' : 'font-normal'}`}
+            title="Texte en gras"
+            aria-label="Activer le texte en gras"
+            id="font-bold-btn"
+          >
+            B
+          </button>
+        </div>
+
+        {/* Divider */}
+        <div className="hidden sm:block w-px h-8 bg-white/10" />
+
         {/* Couleur de surlignage */}
         <div className="flex items-center gap-3">
           <span className="text-xs text-dark-400 font-medium whitespace-nowrap">Surlignage</span>

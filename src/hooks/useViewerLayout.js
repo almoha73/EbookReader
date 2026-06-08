@@ -17,6 +17,7 @@ export function useViewerLayout({ contentRef, currentFractionRef, currentHtml })
   const lastWidthRef    = useRef(0);
   const lastHeightRef   = useRef(0);
   const lastFontSizeRef = useRef(0);
+  const lastBoldTextRef = useRef(false);
 
   // ── ResizeObserver : conserve la position de lecture lors d'un redimensionnement ──
   useEffect(() => {
@@ -31,12 +32,16 @@ export function useViewerLayout({ contentRef, currentFractionRef, currentHtml })
     lastWidthRef.current    = 0;
     lastHeightRef.current   = 0;
     lastFontSizeRef.current = 0;
+    lastBoldTextRef.current = false;
 
     const resizeObserver = new ResizeObserver(() => {
       // Si du texte TTS est surligné, on centre la vue sur lui
       const mark = container.querySelector('mark.tts-highlight');
       if (mark) {
-        const targetScroll = Math.max(0, mark.offsetTop - container.clientHeight / 2);
+        const markRect = mark.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        const absoluteTop = markRect.top - containerRect.top + container.scrollTop;
+        const targetScroll = Math.max(0, absoluteTop - container.clientHeight / 2);
         container.scrollTop = targetScroll;
         return;
       }
@@ -44,17 +49,20 @@ export function useViewerLayout({ contentRef, currentFractionRef, currentHtml })
       const currentWidth    = container.clientWidth;
       const currentHeight   = container.scrollHeight;
       const currentFontSize = preferences.fontSize;
+      const currentBoldText = preferences.boldText;
 
       if (lastWidthRef.current === 0) {
         // Première observation : initialisation sans défilement
         lastWidthRef.current    = currentWidth;
         lastHeightRef.current   = currentHeight;
         lastFontSizeRef.current = currentFontSize;
+        lastBoldTextRef.current = currentBoldText;
       } else if (
         currentWidth    !== lastWidthRef.current    ||
-        currentFontSize !== lastFontSizeRef.current
+        currentFontSize !== lastFontSizeRef.current ||
+        currentBoldText !== lastBoldTextRef.current
       ) {
-        // Taille (largeur) ou police changée : on repositionne à la même fraction.
+        // Taille (largeur), police ou graisse changée : on repositionne à la même fraction.
         // On ignore les changements de hauteur seuls (ex: apparition de la barre de navigation,
         // ou ajout du padding audio-mode) car cela ne change pas la position absolue du texte depuis le haut.
         const newMaxScroll = Math.max(1, currentHeight - container.clientHeight);
@@ -63,6 +71,7 @@ export function useViewerLayout({ contentRef, currentFractionRef, currentHtml })
         lastWidthRef.current    = currentWidth;
         lastHeightRef.current   = currentHeight;
         lastFontSizeRef.current = currentFontSize;
+        lastBoldTextRef.current = currentBoldText;
       }
     });
 
@@ -70,29 +79,33 @@ export function useViewerLayout({ contentRef, currentFractionRef, currentHtml })
     if (innerContent) resizeObserver.observe(innerContent);
 
     return () => resizeObserver.disconnect();
-  }, [preferences.fontSize, currentHtml]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [preferences.fontSize, preferences.boldText, currentHtml]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Mise à l'échelle CSS de la taille de police ──────────────────────────
+  // ── Mise à l'échelle CSS de la taille de police et graisse ──────────────────────────
   useEffect(() => {
     if (!contentRef.current) return;
     const container = contentRef.current;
     const oldScroll  = container.scrollTop;
     const oldHeight  = Math.max(1, container.scrollHeight - container.clientHeight);
-    const fraction   = oldScroll / oldHeight;
+    const fraction   = oldHeight > 0 ? oldScroll / oldHeight : 0;
 
     container.style.fontSize = `${preferences.fontSize}px`;
+    container.style.fontWeight = preferences.boldText ? 'bold' : 'normal';
 
     setTimeout(() => {
       const mark = container.querySelector('mark.tts-highlight');
       if (mark) {
-        const targetScroll = Math.max(0, mark.offsetTop - container.clientHeight / 2);
+        const markRect = mark.getBoundingClientRect();
+        const containerRect = container.getBoundingClientRect();
+        const absoluteTop = markRect.top - containerRect.top + container.scrollTop;
+        const targetScroll = Math.max(0, absoluteTop - container.clientHeight / 2);
         container.scrollTop = targetScroll;
       } else {
         const newHeight = Math.max(1, container.scrollHeight - container.clientHeight);
         container.scrollTop = fraction * newHeight;
       }
     }, 50);
-  }, [preferences.fontSize]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [preferences.fontSize, preferences.boldText]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Variable CSS de couleur de surlignage ────────────────────────────────
   useEffect(() => {

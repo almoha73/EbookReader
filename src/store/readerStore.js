@@ -8,6 +8,7 @@ import { saveLibraryMeta, loadLibraryMeta, saveEpubFile, loadEpubFile, removeEpu
 const DEFAULT_PREFS = {
   fontSize: 18,
   highlightColor: 'rgba(255, 214, 0, 0.5)',
+  boldText: false,
   ttsRate: 1.0,
   voice: null,
   theme: 'dark',
