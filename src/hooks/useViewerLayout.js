@@ -52,10 +52,11 @@ export function useViewerLayout({ contentRef, currentFractionRef, currentHtml })
         lastFontSizeRef.current = currentFontSize;
       } else if (
         currentWidth    !== lastWidthRef.current    ||
-        currentHeight   !== lastHeightRef.current   ||
         currentFontSize !== lastFontSizeRef.current
       ) {
-        // Taille ou police changée : on repositionne à la même fraction
+        // Taille (largeur) ou police changée : on repositionne à la même fraction.
+        // On ignore les changements de hauteur seuls (ex: apparition de la barre de navigation,
+        // ou ajout du padding audio-mode) car cela ne change pas la position absolue du texte depuis le haut.
         const newMaxScroll = Math.max(1, currentHeight - container.clientHeight);
         container.scrollTop = currentFractionRef.current * newMaxScroll;
 

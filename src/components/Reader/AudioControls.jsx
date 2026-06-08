@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react';
 import { useReaderStore } from '../../store/readerStore';
 import { TextToSpeech } from '@capacitor-community/text-to-speech';
 
-export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, onGlobalSeek, sentenceCount, sentenceIdx, localChapterIdx, totalChapters, chapterWeights, cfi }) {
+export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, onGlobalSeek, sentenceCount, sentenceIdx, localChapterIdx, totalChapters, chapterWeights, contentRef, getActiveSentenceIdx }) {
   const { preferences, setPreference, currentBook } = useReaderStore();
   const [voices, setVoices] = useState([]);
   const [showVoices, setShowVoices] = useState(false);
@@ -48,12 +48,31 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
   const isPaused = ttsState === 'paused';
   const isActive = isPlaying || isPaused;
   
+  // Estimation de la phrase en cours selon le scroll quand le TTS est idle
+  const [scrollSentenceIdx, setScrollSentenceIdx] = useState(0);
+
+  useEffect(() => {
+    if (ttsState !== 'idle' || !contentRef?.current || !getActiveSentenceIdx) return;
+    
+    const interval = setInterval(() => {
+      const el = contentRef.current;
+      if (!el) return;
+      const targetY = el.scrollTop + el.clientHeight / 3;
+      const idx = getActiveSentenceIdx(targetY);
+      if (idx !== null && !isNaN(idx)) {
+        setScrollSentenceIdx(idx);
+      }
+    }, 300);
+
+    return () => clearInterval(interval);
+  }, [ttsState, contentRef, getActiveSentenceIdx]);
+
   // Progression interne de la phrase (0-100)
-  const displaySentenceIdx = dragSentenceIdx !== null ? dragSentenceIdx : sentenceIdx;
+  const displaySentenceIdx = dragSentenceIdx !== null ? dragSentenceIdx : (ttsState === 'idle' ? scrollSentenceIdx : sentenceIdx);
   const sentenceProgress = sentenceCount > 0 ? (displaySentenceIdx / sentenceCount) * 100 : 0;
   
   // Progression globale estimée (% du livre) fraction de la phrase actuelle
-  const chapterProgressFraction = sentenceCount > 0 ? (sentenceIdx / sentenceCount) : 0;
+  const chapterProgressFraction = sentenceCount > 0 ? (displaySentenceIdx / sentenceCount) : 0;
   
   let rawProgress = 0;
   

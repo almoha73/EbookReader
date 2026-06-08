@@ -193,13 +193,12 @@ export default function EpubViewer({ book }) {
   });
 
   // Wrapper handleScroll : réinitialise le timer UI + délègue
-  // ⚠️ Ne pas appeler resetUiTimeout pendant l'auto-scroll :
-  // la boucle RAF génère ~60 scroll events/sec, ce qui garderait l'UI (bouton pause)
-  // toujours visible. On ne reset le timer que pour les scrolls initiés par l'utilisateur.
+  // ⚠️ Ne pas appeler resetUiTimeout pendant l'auto-scroll ou le TTS :
+  // Les événements scroll viennent du système et garderaient l'UI visible en permanence.
   const handleScroll = useCallback((e) => {
-    if (!isAutoScrollingRef.current) resetUiTimeout();
+    if (!isAutoScrollingRef.current && !isPlayingRef.current) resetUiTimeout();
     _handleScroll(e);
-  }, [resetUiTimeout, _handleScroll, isAutoScrollingRef]);
+  }, [resetUiTimeout, _handleScroll, isAutoScrollingRef, isPlayingRef]);
 
   // ── Initialisation du livre ────────────────────────────────────────────────
   useEffect(() => {
@@ -236,9 +235,8 @@ export default function EpubViewer({ book }) {
       let targetIdx = sentenceIdx;
       const container = contentRef.current;
       if (container && sentences?.length > 0) {
-        const maxScroll = Math.max(1, container.scrollHeight - container.clientHeight);
-        const fraction  = container.scrollTop / maxScroll;
-        targetIdx = Math.max(0, Math.min(Math.floor(fraction * sentences.length), sentences.length - 1));
+        const targetY = container.scrollTop + container.clientHeight / 3;
+        targetIdx = getActiveSentenceIdx(targetY);
       }
       play(targetIdx);
     } else if (ttsState === 'playing') {
@@ -389,11 +387,13 @@ export default function EpubViewer({ book }) {
               else seekToPhrase(idx);
             }}
             onGlobalSeek={handleGlobalSeek}
-            sentenceCount={sentences.length}
+            sentenceCount={sentences?.length || 0}
             sentenceIdx={sentenceIdx}
             localChapterIdx={localChapterIdx}
             totalChapters={totalChapters}
             chapterWeights={chapterWeights}
+            contentRef={contentRef}
+            getActiveSentenceIdx={getActiveSentenceIdx}
             cfi={`ch${localChapterIdx + 1}/${totalChapters}`}
           />
         </div>
