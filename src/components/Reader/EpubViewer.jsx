@@ -31,6 +31,7 @@ import TocPanel         from './TocPanel';
 // Empêche isPlaying ou sentenceIdx de déclencher un redessin destructeur.
 const EpubHtmlContent = memo(({
   currentHtml, setContentRefCallback, onScroll, onWheel,
+  handleTouchStart, handleTouchEnd,
   disableAutoScroll, handleNextChapterManual, handlePrevChapterManual,
   onDoubleClick, onContextMenu, audioMode, onClick,
 }) => (
@@ -39,6 +40,8 @@ const EpubHtmlContent = memo(({
     tabIndex="-1"
     onScroll={onScroll}
     onWheel={onWheel}
+    onTouchStart={handleTouchStart}
+    onTouchEnd={handleTouchEnd}
     onTouchMove={disableAutoScroll}
     onMouseDown={disableAutoScroll}
     onDoubleClick={onDoubleClick}
@@ -144,6 +147,8 @@ export default function EpubViewer({ book }) {
     saveProgressTimeoutRef,
     handleScroll: _handleScroll,
     handleWheel:  _handleWheel,
+    handleTouchStart,
+    handleTouchEnd,
     handleNextChapterManual,
     handlePrevChapterManual,
     handleGlobalSeek,
@@ -359,6 +364,8 @@ export default function EpubViewer({ book }) {
             setContentRefCallback={setContentRefCallback}
             onScroll={handleScroll}
             onWheel={handleWheel}
+            handleTouchStart={handleTouchStart}
+            handleTouchEnd={handleTouchEnd}
             disableAutoScroll={handleUserInteraction}
             handleNextChapterManual={handleNextChapterManual}
             handlePrevChapterManual={handlePrevChapterManual}

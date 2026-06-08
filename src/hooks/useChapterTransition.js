@@ -285,6 +285,29 @@ export function useChapterTransition({ contentRef, epubContent, tts, book, showT
     }, 500);
   }, [checkScrollTransition, getActiveSentenceIdx, highlightSentence, isPlayingRef]);
 
+  // ── Gestionnaire de touch pour les limites de scroll (mobile) ─────────────
+  const touchStartYRef = useRef(null);
+
+  const handleTouchStart = useCallback((e) => {
+    touchStartYRef.current = e.touches[0].clientY;
+  }, []);
+
+  const handleTouchEnd = useCallback((e) => {
+    if (touchStartYRef.current === null || !contentRef.current) return;
+    const touchEndY = e.changedTouches[0].clientY;
+    const deltaY = touchStartYRef.current - touchEndY; // > 0 signifie swipe vers le haut (scroll vers le bas)
+    touchStartYRef.current = null;
+
+    const el = contentRef.current;
+    // Si l'utilisateur swipe alors qu'il est DÉJÀ en butée, onScroll ne se déclenche pas.
+    // On force la transition si le swipe est assez grand (> 40px)
+    if (deltaY > 40 && el.scrollHeight - el.scrollTop - el.clientHeight < 5) {
+      checkScrollTransition('down', el);
+    } else if (deltaY < -40 && el.scrollTop <= 0) {
+      checkScrollTransition('up', el);
+    }
+  }, [checkScrollTransition]);
+
   // ── Gestionnaire de molette ───────────────────────────────────────────────
   const handleWheel = useCallback((e, resetUiTimeout) => {
     if (resetUiTimeout) resetUiTimeout();
@@ -418,8 +441,11 @@ export function useChapterTransition({ contentRef, epubContent, tts, book, showT
     currentFractionRef,
     lastActiveSentenceIdxRef,
     lastHighlightTimeRef,
+    touchStartYRef,
     handleScroll,
     handleWheel,
+    handleTouchStart,
+    handleTouchEnd,
     handleNextChapterManual,
     handlePrevChapterManual,
     handleGlobalSeek,
@@ -427,4 +453,3 @@ export function useChapterTransition({ contentRef, epubContent, tts, book, showT
     handleSaveBookmark,
   };
 }
-
