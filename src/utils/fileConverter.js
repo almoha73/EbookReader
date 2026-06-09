@@ -13,16 +13,18 @@ const getContainerXml = () => `<?xml version="1.0" encoding="UTF-8"?>
 /**
  * Génère le fichier content.opf (manifeste et métadonnées)
  */
-const getOpfXml = (title, author, chapters) => `<?xml version="1.0" encoding="UTF-8"?>
+const getOpfXml = (title, author, chapters, coverId, coverMimeType) => `<?xml version="1.0" encoding="UTF-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" unique-identifier="BookID" version="2.0">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:opf="http://www.idpf.org/2007/opf">
     <dc:title>${title.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</dc:title>
     <dc:creator>${author.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</dc:creator>
     <dc:language>fr</dc:language>
     <dc:identifier id="BookID">urn:uuid:${crypto.randomUUID()}</dc:identifier>
+    ${coverId ? `<meta name="cover" content="${coverId}"/>` : ''}
   </metadata>
   <manifest>
     <item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>
+    ${coverId ? `<item id="${coverId}" href="cover.jpg" media-type="${coverMimeType || 'image/jpeg'}"/>` : ''}
     ${chapters.map((ch, i) => `<item id="chapter_${i}" href="chapter_${i}.html" media-type="application/xhtml+xml"/>`).join('\n    ')}
   </manifest>
   <spine toc="ncx">
@@ -113,6 +115,23 @@ export async function convertFb2ToEpub(file) {
   let author = `${authorFirstName} ${authorLastName}`.trim();
   if (!author) author = "Inconnu";
 
+  // Extraire la couverture
+  let coverBase64 = null;
+  let coverMimeType = "image/jpeg";
+  const coverImageNode = doc.querySelector("description title-info coverpage image");
+  
+  if (coverImageNode) {
+    const href = coverImageNode.getAttribute("l:href") || coverImageNode.getAttribute("xlink:href") || coverImageNode.getAttribute("href");
+    if (href && href.startsWith("#")) {
+      const id = href.substring(1);
+      const binaryNode = doc.querySelector(`binary[id="${id}"]`);
+      if (binaryNode) {
+        coverBase64 = binaryNode.textContent.trim();
+        coverMimeType = binaryNode.getAttribute("content-type") || "image/jpeg";
+      }
+    }
+  }
+
   // Extraire le contenu (les <section> dans le <body> principal)
   const bodies = Array.from(doc.querySelectorAll("body"));
   const mainBody = bodies[0]; // Normalement le premier body contient le texte, les autres les notes.
@@ -138,7 +157,7 @@ export async function convertFb2ToEpub(file) {
       }
   }
 
-  return buildEpubFile(title, author, chapters, `${title}.epub`);
+  return buildEpubFile(title, author, chapters, `${title}.epub`, coverBase64, coverMimeType);
 }
 
 /**
@@ -187,7 +206,7 @@ function parseFb2Node(node) {
 /**
  * Fabrique le fichier .epub final
  */
-async function buildEpubFile(title, author, chapters, filename) {
+async function buildEpubFile(title, author, chapters, filename, coverBase64 = null, coverMimeType = null) {
   const zip = new JSZip();
 
   // Mimetype (doit être le premier fichier, non compressé, mais jszip le gère)
@@ -199,8 +218,13 @@ async function buildEpubFile(title, author, chapters, filename) {
 
   // OEBPS
   const oebps = zip.folder("OEBPS");
-  oebps.file("content.opf", getOpfXml(title, author, chapters));
+  const coverId = coverBase64 ? "cover-image" : null;
+  oebps.file("content.opf", getOpfXml(title, author, chapters, coverId, coverMimeType));
   oebps.file("toc.ncx", getNcxXml(title, chapters));
+
+  if (coverBase64) {
+    oebps.file("cover.jpg", coverBase64, { base64: true });
+  }
 
   chapters.forEach((ch, i) => {
     oebps.file(`chapter_${i}.html`, getHtmlPage(ch.title, ch.bodyHtml));

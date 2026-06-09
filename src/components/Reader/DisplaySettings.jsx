@@ -42,11 +42,11 @@ export default function DisplaySettings({ onFontSizeChange, onHighlightColorChan
 
   return (
     <div className="glass mx-2 mb-1 px-4 py-3 rounded-xl border border-white/5">
-      <div className="flex flex-wrap gap-6 items-center">
+      <div className="flex flex-wrap gap-3 sm:gap-6 items-center">
 
         {/* Taille de police */}
         <div className="flex items-center gap-3">
-          <span className="text-xs text-dark-400 font-medium whitespace-nowrap">Taille</span>
+          <span className="text-xs text-white/70 font-medium whitespace-nowrap">Taille</span>
           <button
             onClick={() => handleFontSize(-1)}
             className="btn-icon w-8 h-8 text-lg font-bold"
@@ -91,7 +91,7 @@ export default function DisplaySettings({ onFontSizeChange, onHighlightColorChan
 
         {/* Couleur de surlignage */}
         <div className="flex items-center gap-3">
-          <span className="text-xs text-dark-400 font-medium whitespace-nowrap">Surlignage</span>
+          <span className="text-xs text-white/70 font-medium whitespace-nowrap">Surlignage</span>
           <div className="flex gap-2">
             {HIGHLIGHT_COLORS.map(({ label, value }) => (
               <button
@@ -115,7 +115,7 @@ export default function DisplaySettings({ onFontSizeChange, onHighlightColorChan
 
         {/* Aperçu couleur active */}
         <div className="flex items-center gap-2">
-          <span className="text-xs text-dark-400">Aperçu:</span>
+          <span className="text-xs text-white/70">Aperçu:</span>
           <span
             className="text-sm px-2 py-0.5 rounded"
             style={{ background: preferences.highlightColor }}
@@ -129,7 +129,7 @@ export default function DisplaySettings({ onFontSizeChange, onHighlightColorChan
 
         {/* Thème */}
         <div className="flex items-center gap-3">
-          <span className="text-xs text-dark-400 font-medium whitespace-nowrap">Thème</span>
+          <span className="text-xs text-white/70 font-medium whitespace-nowrap">Thème</span>
           <div className="flex gap-2">
             {THEMES.map(({ id, label, bg, text, border }) => (
               <button

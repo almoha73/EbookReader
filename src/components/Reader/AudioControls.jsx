@@ -94,7 +94,7 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
 
   return (
     <div 
-      className="glass-panel mx-0 mb-0 mt-1 px-4 pt-3 pb-3" 
+      className="glass-panel mx-0 mb-0 mt-1 px-2 sm:px-4 pt-3 pb-3" 
       style={{ 
         borderBottomLeftRadius: 0, 
         borderBottomRightRadius: 0, 
@@ -210,7 +210,7 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
         </div>
       )}
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-1 sm:gap-3">
 
         {/* Bouton Stop */}
         <button
@@ -262,16 +262,16 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
         <div className="flex-1" />
 
         {/* Contrôle vitesse */}
-        <div className="flex items-center gap-1 bg-white/5 rounded-lg px-2 py-1">
+        <div className="flex items-center gap-0.5 sm:gap-1 bg-white/5 rounded-lg px-1 sm:px-2 py-1">
           <button
             onClick={() => setPreference('ttsRate', Math.max(0.5, Number((preferences.ttsRate - 0.1).toFixed(1))))}
-            className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 rounded-md transition-colors"
+            className="w-6 h-6 sm:w-8 sm:h-8 flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 rounded-md transition-colors"
             aria-label="Réduire la vitesse"
           >
             -
           </button>
           
-          <div className="relative w-16 mx-1">
+          <div className="relative w-12 sm:w-16 mx-0.5 sm:mx-1">
             <input
               type="number"
               min="0.5"
@@ -290,7 +290,7 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
 
           <button
             onClick={() => setPreference('ttsRate', Math.min(2.0, Number((preferences.ttsRate + 0.1).toFixed(1))))}
-            className="w-8 h-8 flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 rounded-md transition-colors"
+            className="w-6 h-6 sm:w-8 sm:h-8 flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 rounded-md transition-colors"
             aria-label="Augmenter la vitesse"
           >
             +

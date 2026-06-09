@@ -528,6 +528,7 @@ export function useTTS() {
     TextToSpeech.stop().catch(()=>{});
     isPlayingRef.current = true;
     isPausedRef.current = false;
+    autoScrollEnabledRef.current = true;
     setTtsState('playing');
     
     playFromTimeoutRef.current = setTimeout(() => {

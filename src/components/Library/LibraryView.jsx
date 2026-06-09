@@ -110,6 +110,14 @@ export default function LibraryView() {
     }
   };
 
+  const handleRemoveBook = (id) => {
+    const book = books.find(b => b.id === id);
+    if (!book) return;
+    if (window.confirm(`Voulez-vous vraiment supprimer "${book.title}" de votre bibliothèque ?\nCette action est irréversible.`)) {
+      removeBook(id);
+    }
+  };
+
   const handleFileInput = (e) => {
     const files = Array.from(e.target.files);
     files.forEach(processEpubFile);
@@ -133,8 +141,8 @@ export default function LibraryView() {
               📚
             </div>
             <div>
-              <h1 className="text-xl font-bold font-display text-white leading-tight">EbookReader</h1>
-              <p className="text-xs text-dark-400">Votre liseuse numérique</p>
+              <h1 className="text-lg sm:text-xl font-bold font-display text-white leading-tight">EbookReader</h1>
+              <p className="text-[10px] sm:text-xs text-white/60">Votre liseuse numérique</p>
             </div>
           </div>
           <button
@@ -153,7 +161,8 @@ export default function LibraryView() {
                 <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
               </svg>
             )}
-            <span>{loading ? 'Import…' : 'Importer EPUB, TXT, FB2'}</span>
+            <span className="hidden sm:inline">{loading ? 'Import…' : 'Importer EPUB, TXT, FB2'}</span>
+            <span className="sm:hidden">{loading ? 'Import…' : 'Importer'}</span>
           </button>
           <input
             ref={fileRef}
@@ -186,7 +195,7 @@ export default function LibraryView() {
             <h2 className="text-2xl font-bold font-display text-white mb-2">
               Votre bibliothèque est vide
             </h2>
-            <p className="text-dark-400 text-center max-w-sm mb-6">
+            <p className="text-white/60 text-center max-w-sm mb-6">
               Importez vos fichiers pour commencer à lire. Glissez-déposez ou cliquez sur le bouton.
             </p>
             <button
@@ -195,7 +204,7 @@ export default function LibraryView() {
             >
               📂 Choisir un fichier (EPUB, TXT, FB2)
             </button>
-            <p className="text-xs text-dark-500 mt-4">
+            <p className="text-xs text-white/50 mt-4">
               Vos livres sont stockés localement dans votre navigateur
             </p>
           </div>
@@ -212,7 +221,7 @@ export default function LibraryView() {
                   : 'border-white/5 bg-white/1'
               }`}
             >
-              <p className="text-xs text-dark-400">
+              <p className="text-xs text-white/60">
                 Glissez-déposez des fichiers ici pour les ajouter (.epub, .txt, .fb2)
               </p>
             </div>
@@ -224,13 +233,13 @@ export default function LibraryView() {
             </div>
 
             {/* Grille des livres */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+            <div className="grid grid-cols-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-2 sm:gap-4">
               {books.map(book => (
                 <BookCard
                   key={book.id}
                   book={{ ...book, _hue: getHue(book.id) }}
                   onOpen={(b) => openBook(b)} // openBook est async, s'occupe de charger le File si besoin
-                  onRemove={removeBook}
+                  onRemove={handleRemoveBook}
                 />
               ))}
             </div>
@@ -239,7 +248,7 @@ export default function LibraryView() {
       </main>
 
       {/* ── Footer ───────────────────────────────────────────────────── */}
-      <footer className="text-center py-6 text-xs text-dark-500">
+      <footer className="text-center py-6 text-xs text-white/40">
         EbookReader • EPUB + Web Speech API • Données stockées localement
       </footer>
     </div>
