@@ -410,6 +410,7 @@ export default function EpubViewer({ book }) {
             onGlobalSeek={handleGlobalSeek}
             sentenceCount={sentences?.length || 0}
             sentenceIdx={sentenceIdx}
+            sentences={sentences}
             localChapterIdx={localChapterIdx}
             totalChapters={totalChapters}
             chapterWeights={chapterWeights}

@@ -5,7 +5,7 @@ import { useState, useEffect } from 'react';
 import { useReaderStore } from '../../store/readerStore';
 import { TextToSpeech } from '@capacitor-community/text-to-speech';
 
-export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, onGlobalSeek, sentenceCount, sentenceIdx, localChapterIdx, totalChapters, chapterWeights, contentRef, getActiveSentenceIdx }) {
+export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, onGlobalSeek, sentenceCount, sentenceIdx, sentences, localChapterIdx, totalChapters, chapterWeights, contentRef, getActiveSentenceIdx }) {
   const { preferences, setPreference, currentBook } = useReaderStore();
   const [voices, setVoices] = useState([]);
   const [showVoices, setShowVoices] = useState(false);
@@ -90,7 +90,44 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
   const showTotalProgress = totalChapters > 0;
   const displayProgress = dragProgress !== null ? dragProgress : totalProgress;
 
-
+  // Calcul du temps restant estimé
+  let remainingTimeStr = "";
+  if (sentences && sentences.length > 0 && typeof preferences.ttsRate === 'number') {
+    let remainingCharsChapter = 0;
+    for (let i = displaySentenceIdx; i < sentences.length; i++) {
+      remainingCharsChapter += sentences[i].length;
+    }
+    
+    // Vitesse moyenne : 12 caractères / seconde à x1.0 (voir useTTS.js)
+    const charsPerSecond = 12 * (preferences.ttsRate || 1.0);
+    const remainingSecondsChapter = remainingCharsChapter / charsPerSecond;
+    
+    let totalCharsChapter = 0;
+    for (let i = 0; i < sentences.length; i++) {
+      totalCharsChapter += sentences[i].length;
+    }
+    const totalSecondsChapter = totalCharsChapter / charsPerSecond;
+    
+    let totalRemainingSecondsBook = remainingSecondsChapter;
+    if (chapterWeights && chapterWeights.weights.length > localChapterIdx) {
+      const currentChapterWeight = chapterWeights.weights[localChapterIdx];
+      if (currentChapterWeight > 0) {
+        const secondsPerPercent = totalSecondsChapter / (currentChapterWeight * 100);
+        const remainingPercentGlobal = 100 - displayProgress;
+        totalRemainingSecondsBook = remainingPercentGlobal * secondsPerPercent;
+      }
+    }
+    
+    const formatTime = (totalSeconds) => {
+      const h = Math.floor(totalSeconds / 3600);
+      const m = Math.floor((totalSeconds % 3600) / 60);
+      if (h > 0) return `${h}h${m.toString().padStart(2, '0')}`;
+      if (m > 0) return `${m} min`;
+      return `< 1 min`;
+    };
+    
+    remainingTimeStr = `Chap: ${formatTime(remainingSecondsChapter)} - Livre: ${formatTime(totalRemainingSecondsBook)}`;
+  }
 
   return (
     <div 
@@ -120,6 +157,7 @@ export default function AudioControls({ ttsState, onPlayPause, onStop, onSeek, o
               </svg>
               <span>Navigation par phrase ({sentenceIdx + 1}/{sentenceCount})</span>
             </div>
+            {remainingTimeStr && <span className="text-[10px] text-brand-300 ml-2 font-medium bg-brand-500/20 px-1.5 py-0.5 rounded">⏱️ {remainingTimeStr}</span>}
           </summary>
           
           <div className="pt-2 pb-1 cursor-default">
