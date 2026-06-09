@@ -25,6 +25,7 @@ import AudioControls    from './AudioControls';
 import DisplaySettings  from './DisplaySettings';
 import NavigationBar    from './NavigationBar';
 import TocPanel         from './TocPanel';
+import { KeepAwake }    from '@capacitor-community/keep-awake';
 
 // ── Conteneur HTML isolé ──────────────────────────────────────────────────────
 // Enveloppé dans React.memo pour ne se re-rendre QUE si le HTML ou l'audioMode changent.
@@ -191,6 +192,26 @@ export default function EpubViewer({ book }) {
     isTransitioningRef,
     isAutoScrollingRef,
   });
+
+  // ── Empêcher la mise en veille de l'écran ─────────────────────────────────
+  useEffect(() => {
+    const shouldKeepAwake = isAutoScrolling || ttsState === 'playing';
+    const manageAwake = async () => {
+      try {
+        if (shouldKeepAwake) {
+          await KeepAwake.keepAwake();
+        } else {
+          await KeepAwake.allowSleep();
+        }
+      } catch (e) {
+        console.warn('KeepAwake error:', e);
+      }
+    };
+    manageAwake();
+    
+    // Cleanup on unmount
+    return () => { KeepAwake.allowSleep().catch(() => {}) };
+  }, [isAutoScrolling, ttsState]);
 
   // Wrapper handleScroll : réinitialise le timer UI + délègue
   // ⚠️ Ne pas appeler resetUiTimeout pendant l'auto-scroll ou le TTS :
